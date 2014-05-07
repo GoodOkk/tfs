@@ -1,4 +1,4 @@
-obj-m += brd.o
+obj-m += lcd.o
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
