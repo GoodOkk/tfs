@@ -22,6 +22,10 @@
 
 #include <asm/uaccess.h>
 
+#include "klog.h"
+
+#define __SUBCOMPONENT__ "cdisk"
+
 #define SECTOR_SHIFT		9
 #define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - SECTOR_SHIFT)
 #define PAGE_SECTORS		(1 << PAGE_SECTORS_SHIFT)
@@ -60,7 +64,7 @@ static void cdisk_make_request(struct request_queue *q, struct bio *bio)
 	struct cdisk_device *device = bdev->bd_disk->private_data;
 	int err = -EIO;
 
-	printk(KERN_INFO "cdisk:make_request device=%p\n", device);
+	klog(KL_INFO, "cdisk:make_request device=%p", device);
 
 	bio_endio(bio, err);
 }
@@ -70,7 +74,7 @@ static int cdisk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd
 	int error;
 	struct cdisk_device *device = bdev->bd_disk->private_data;
 
-	printk(KERN_INFO "cdisk: ioctl=%d, device=%p\n", cmd, device);
+	klog(KL_INFO, "cdisk: ioctl=%d, device=%p", cmd, device);
 	error = -EBUSY;
 	return error;
 }
@@ -104,6 +108,7 @@ static struct cdisk_device *cdisk_alloc(int i)
 	device->queue->limits.max_discard_sectors = UINT_MAX;
 	device->queue->limits.discard_zeroes_data = 1;
 	queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, device->queue);
+	
 	disk = device->disk = alloc_disk(1);
 	if (!disk)
 		goto out_free_queue;
@@ -129,7 +134,7 @@ out:
 
 void cdisk_free_pages(struct cdisk_device *device)
 {
-	printk(KERN_ERR "not implemented yet\n");
+	klog(KL_ERR, "not implemented yet");
 }
 
 static void cdisk_free(struct cdisk_device *device)
@@ -143,26 +148,26 @@ static void cdisk_free(struct cdisk_device *device)
 static int __init cdisk_init(void)
 {	
 	int major = -1;
-	printk(KERN_INFO "cdisk:cdisk_init\n");	
+	klog(KL_INFO, "cdisk:cdisk_init");	
 	major = register_blkdev(0, CDISK_DEV_NAME);
 	if (major < 0) {
-		printk(KERN_ERR "register_blkdev failed, result=%d\n", major);
+		klog(KL_INFO, "register_blkdev failed, result=%d", major);
 		return -EIO;
 	}
 
 	cdisk_major = major;
-	printk(KERN_INFO "cdisk: module loaded, major=%d\n", major);
+	klog(KL_INFO, "cdisk: module loaded, major=%d", major);
 	return 0;
 }
 
 static void __exit cdisk_exit(void)
 {
-	printk(KERN_INFO "cdisk:cdisk_exit\n");
+	klog(KL_INFO, "cdisk:cdisk_exit");
 	if (cdisk_major != -1) {
 		unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
 		cdisk_major = -1;
 	}
-	printk(KERN_INFO "cdisk:cdisk_exit end\n");
+	klog(KL_INFO, "cdisk:cdisk_exit end");
 }
 
 module_init(cdisk_init);
