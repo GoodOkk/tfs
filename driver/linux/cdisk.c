@@ -64,7 +64,7 @@ static void cdisk_make_request(struct request_queue *q, struct bio *bio)
 	struct cdisk_device *device = bdev->bd_disk->private_data;
 	int err = -EIO;
 
-	klog(KL_INFO, "cdisk:make_request device=%p", device);
+	klog(KL_INFO, "device=%p", device);
 
 	bio_endio(bio, err);
 }
@@ -74,7 +74,7 @@ static int cdisk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd
 	int error;
 	struct cdisk_device *device = bdev->bd_disk->private_data;
 
-	klog(KL_INFO, "cdisk: ioctl=%d, device=%p", cmd, device);
+	klog(KL_INFO, "ioctl=%d, device=%p", cmd, device);
 	error = -EBUSY;
 	return error;
 }
@@ -148,7 +148,7 @@ static void cdisk_free(struct cdisk_device *device)
 static int __init cdisk_init(void)
 {	
 	int major = -1;
-	klog(KL_INFO, "cdisk:cdisk_init");	
+	klog(KL_INFO, "init");	
 	major = register_blkdev(0, CDISK_DEV_NAME);
 	if (major < 0) {
 		klog(KL_INFO, "register_blkdev failed, result=%d", major);
@@ -156,18 +156,18 @@ static int __init cdisk_init(void)
 	}
 
 	cdisk_major = major;
-	klog(KL_INFO, "cdisk: module loaded, major=%d", major);
+	klog(KL_INFO, "module loaded, major=%d", major);
 	return 0;
 }
 
 static void __exit cdisk_exit(void)
 {
-	klog(KL_INFO, "cdisk:cdisk_exit");
+	klog(KL_INFO, "exit");
 	if (cdisk_major != -1) {
 		unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
 		cdisk_major = -1;
 	}
-	klog(KL_INFO, "cdisk:cdisk_exit end");
+	klog(KL_INFO, "exited");
 }
 
 module_init(cdisk_init);

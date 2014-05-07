@@ -55,7 +55,7 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
 
     	getnstimeofday(&ts);
 
-    	klog_write_msg(&pos,&left,"%s:[%lld.%.9ld][%d]%s():%s:%d, ", subcomp, (long long)ts.tv_sec, ts.tv_nsec, current->pid, func, truncate_file_path(file), line);
+    	klog_write_msg(&pos,&left,"%s:[%lld.%.9ld][%d]:%s:%d:%s(), ", subcomp, (long long)ts.tv_sec, ts.tv_nsec, current->pid, truncate_file_path(file), line, func);
 
     	va_start(args,fmt);
     	klog_write_msg2(&pos,&left,fmt,args);
