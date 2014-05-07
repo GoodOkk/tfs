@@ -23,6 +23,7 @@
 #include <asm/uaccess.h>
 
 #include "klog.h"
+#include <cdisk_cmd.h>
 
 #define __SUBCOMPONENT__ "cdisk"
 
@@ -71,11 +72,20 @@ static void cdisk_make_request(struct request_queue *q, struct bio *bio)
 
 static int cdisk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
-	int error;
+	int error = -EINVAL;
 	struct cdisk_device *device = bdev->bd_disk->private_data;
 
-	klog(KL_INFO, "ioctl=%d, device=%p", cmd, device);
-	error = -EBUSY;
+	klog(KL_INFO, "device=%p, cmd=%u, arg=%p", device, cmd, arg);
+	switch (cmd) {
+		case IOCTL_HELLO:
+			klog(KL_INFO, "hello from user mode");
+			error = 0;
+			break;
+		default:
+			klog(KL_ERR, "unknown ioctl=%d", cmd);
+			error = -EINVAL;
+			break;
+	}
 	return error;
 }
 

@@ -1,6 +1,4 @@
-#ifndef __KLOG_H__
-#define __KLOG_H__
-
+#pragma once
 
 #define KL_INFO_L 	1
 #define KL_ERR_L 	2
@@ -21,4 +19,3 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
 #define LEAVE_FUNC \
   klog(KL_INFO, "Leave %s", __FUNCTION__);
 
-#endif
