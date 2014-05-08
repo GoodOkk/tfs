@@ -16,7 +16,6 @@
 #include <linux/bio.h>
 #include <linux/highmem.h>
 #include <linux/mutex.h>
-#include <linux/radix-tree.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
 
@@ -31,7 +30,7 @@
 #define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - SECTOR_SHIFT)
 #define PAGE_SECTORS		(1 << PAGE_SECTORS_SHIFT)
 
-#define CDISK_IN_SECTORS_SIZE 10
+#define CDISK_IN_SECTORS_SIZE 128
 
 
 #define CDISK_FLAGS_CTL		(1 << 0)
@@ -49,13 +48,15 @@ struct cdisk_device {
 	 * of the block device.
 	 */
 	spinlock_t		lock;
-	struct radix_tree_root	pages;
+	void			*data;
+	int			data_size;
 };
 
 static int cdisk_num_alloc(void);
 static void cdisk_num_free(int num);
 static void cdisk_del_one(struct cdisk_device *device);
 static struct cdisk_device *cdisk_alloc(void);
+static void cdisk_free(struct cdisk_device *device);
 
 #define CDISK_NUMS 256
 
@@ -123,10 +124,22 @@ out:
 static int cdisk_create(int *disk_num)
 {
 	struct cdisk_device *device = NULL;
+	int error = -EINVAL;
 
 	device = cdisk_alloc();
-	if (!device)
-		return -ENOMEM;
+	if (!device) {
+		error = -ENOMEM;
+		goto out;
+	}
+
+	device->data_size = (CDISK_IN_SECTORS_SIZE/PAGE_SECTORS)*PAGE_SIZE;
+	device->data = vmalloc(device->data_size);
+	if (!device->data) {
+		error = -ENOMEM;
+		goto out_dev_free;
+	}
+
+	klog(KL_INFO, "created device=%p, num=%d, data_size=%d\n", device, device->number, device->data_size);
 
 	mutex_lock(&cdisk_devices_lock);
 	list_add_tail(&device->devices_list, &cdisk_devices);
@@ -134,6 +147,11 @@ static int cdisk_create(int *disk_num)
 	add_disk(device->disk);
 	*disk_num = device->number;
 	return 0;
+
+out_dev_free:
+	cdisk_free(device);
+out:
+	return error;
 }
 
 static int cdisk_delete(int disk_num)
@@ -268,7 +286,6 @@ static struct cdisk_device *cdisk_alloc(void)
 
 	device->number = num;
 	spin_lock_init(&device->lock);
-	INIT_RADIX_TREE(&device->pages, GFP_ATOMIC);
 	device->queue = blk_alloc_queue(GFP_KERNEL);
 	if (!device->queue)
 		goto out_free_device;
@@ -307,9 +324,10 @@ out:
 	return NULL;
 }
 
-void cdisk_free_pages(struct cdisk_device *device)
+static void cdisk_free_pages(struct cdisk_device *device)
 {
-	klog(KL_ERR, "not implemented yet");
+	if (device->data)
+		vfree(device->data);
 }
 
 static void cdisk_free(struct cdisk_device *device)
