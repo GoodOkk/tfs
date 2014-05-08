@@ -43,7 +43,7 @@ static int cdisk_create(int *disk_num)
 	
 	memset(&params, 0, sizeof(struct cdisk_params));
 
-	error = ioctl(fd, IOCTL_DISK_CREATE, params);
+	error = ioctl(fd, IOCTL_DISK_CREATE, &params);
 	if (error)
 		goto out;
 	
