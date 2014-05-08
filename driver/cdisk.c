@@ -33,9 +33,13 @@
 
 #define CDISK_IN_SECTORS_SIZE 10
 
+
+#define CDISK_FLAGS_CTL		(1 << 0)
+#define CDISK_FLAGS_DELETING	(1 << 1)
+
 struct cdisk_device {
 	int		number;
-
+	int		flags;
 	struct request_queue	*queue;
 	struct gendisk		*disk;
 	struct list_head	devices_list;
@@ -48,6 +52,44 @@ struct cdisk_device {
 	struct radix_tree_root	pages;
 };
 
+static int cdisk_num_alloc(void);
+static void cdisk_num_free(int num);
+static void cdisk_del_one(struct cdisk_device *device);
+static struct cdisk_device *cdisk_alloc(void);
+
+#define CDISK_NUMS 256
+
+static char cdisk_nums[CDISK_NUMS];
+
+static DEFINE_MUTEX(cdisk_nums_lock);
+
+static int cdisk_num_alloc(void)
+{
+	int i = 0;
+	int num = -1;
+
+	mutex_lock(&cdisk_nums_lock);
+	for (i = 0; i < CDISK_NUMS; i++) {
+		if (cdisk_nums[i] == 0) {
+			cdisk_nums[i] = 1;
+			num = i;
+			break;
+		}
+	}
+	mutex_unlock(&cdisk_nums_lock);
+	return num;
+}
+
+static void cdisk_num_free(int num) 
+{
+	if (num < 0 || num >= CDISK_NUMS)
+		return;
+
+	mutex_lock(&cdisk_nums_lock);
+	cdisk_nums[num] = 0;
+	mutex_unlock(&cdisk_nums_lock);	
+}
+
 /*
  * Look up and return a brd's page for a given sector.
  */
@@ -58,34 +100,120 @@ static LIST_HEAD(cdisk_devices);
 static int cdisk_major = -1;
 #define CDISK_DEV_NAME "cdisk"
 
+static int cdisk_is_ctl(struct cdisk_device *device)
+{
+	return (device->flags & CDISK_FLAGS_CTL) ? 1 : 0;
+}
 
 static void cdisk_make_request(struct request_queue *q, struct bio *bio)
 {
 	struct block_device *bdev = bio->bi_bdev;
 	struct cdisk_device *device = bdev->bd_disk->private_data;
 	int err = -EIO;
-
+	if (cdisk_is_ctl(device)) {
+		klog(KL_INFO, "device=%p is ctl device, so ignore I/O", device);
+		err = -EIO;
+		goto out;
+	}
 	klog(KL_INFO, "device=%p", device);
-
+out:
 	bio_endio(bio, err);
+}
+
+static int cdisk_create(int *disk_num)
+{
+	struct cdisk_device *device = NULL;
+
+	device = cdisk_alloc();
+	if (!device)
+		return -ENOMEM;
+
+	mutex_lock(&cdisk_devices_lock);
+	list_add_tail(&device->devices_list, &cdisk_devices);
+	mutex_unlock(&cdisk_devices_lock);
+	add_disk(device->disk);
+	*disk_num = device->number;
+	return 0;
+}
+
+static int cdisk_delete(int disk_num)
+{
+	int error = -EINVAL;
+
+	klog(KL_ERR, "not implemented yet");
+	return error;
+}
+
+static int cdisk_setup(int disk_num)
+{
+	int error = -EINVAL;
+
+	klog(KL_ERR, "not implemented yet");
+	return error;
+}
+
+static int cdisk_ioctl_disk(struct cdisk_device *device, struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
+{
+	int error = -EINVAL;
+	
+	klog(KL_INFO, "device=%p, cmd=%u, arg=%p", device, cmd, arg);
+	klog(KL_ERR, "not implemented yet");
+	return error;
 }
 
 static int cdisk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
 	int error = -EINVAL;
 	struct cdisk_device *device = bdev->bd_disk->private_data;
+	struct cdisk_params *params = NULL;	
 
 	klog(KL_INFO, "device=%p, cmd=%u, arg=%p", device, cmd, arg);
+	
+	if (!cdisk_is_ctl(device)) {
+		return cdisk_ioctl_disk(device, bdev, mode, cmd, arg);
+	}
+
+	params = kmalloc(sizeof(struct cdisk_params), GFP_KERNEL);
+	if (!params) {
+		error = -ENOMEM;
+		goto out;
+	}
+
+	if (copy_from_user(params, (const void *)arg, sizeof(struct cdisk_params))) {
+		error = -EFAULT;
+		goto out_free_params;
+	}
+	
 	switch (cmd) {
 		case IOCTL_HELLO:
 			klog(KL_INFO, "hello from user mode");
 			error = 0;
+			break;
+		case IOCTL_DISK_CREATE:
+			error = cdisk_create(&params->u.create.disk_num);	
+			break;
+		case IOCTL_DISK_DELETE:
+			error = cdisk_delete(params->u.delete.disk_num);
+			break;
+		case IOCTL_DISK_SETUP:
+			error = cdisk_setup(params->u.delete.disk_num);
 			break;
 		default:
 			klog(KL_ERR, "unknown ioctl=%d", cmd);
 			error = -EINVAL;
 			break;
 	}
+	
+	params->error = error;
+
+	if (copy_to_user((void *)arg, params, sizeof(struct cdisk_params))) {
+		error = -EFAULT;
+		goto out_free_params;
+	}
+
+out_free_params:
+	kfree(params);
+out:
 	return error;
 }
 
@@ -95,9 +223,14 @@ static int cdisk_direct_access(struct block_device *bdev, sector_t sector,
 {
 	struct cdisk_device *device = bdev->bd_disk->private_data;
 	int error = -EINVAL;
+	if (cdisk_is_ctl(device)) {
+		klog(KL_INFO, "device=%p is ctl device, so ignore I/O", device);
+		error = -EIO;		
+		goto out;
+	}
 
 	klog(KL_INFO, "device=%p", device);
-	
+out:	
 	return error;
 }
 
@@ -107,16 +240,21 @@ static const struct block_device_operations cdisk_fops = {
 	.direct_access = cdisk_direct_access,
 };
 
-static struct cdisk_device *cdisk_alloc(int i)
+static struct cdisk_device *cdisk_alloc(void)
 {
 	struct cdisk_device *device = NULL;
 	struct gendisk *disk = NULL;
+	int num = -1;
+
+	num = cdisk_num_alloc();
+	if (num == -1) 
+		goto out;
 
 	device = kzalloc(sizeof(*device), GFP_KERNEL);
 	if (!device)
-		goto out;
+		goto out_free_num;
 
-	device->number = i;
+	device->number = num;
 	spin_lock_init(&device->lock);
 	INIT_RADIX_TREE(&device->pages, GFP_ATOMIC);
 	device->queue = blk_alloc_queue(GFP_KERNEL);
@@ -137,12 +275,12 @@ static struct cdisk_device *cdisk_alloc(int i)
 		goto out_free_queue;
 
 	disk->major = cdisk_major;
-	disk->first_minor = i;
+	disk->first_minor = num;
 	disk->fops = &cdisk_fops;
 	disk->private_data = device;
 	disk->queue = device->queue;
 	disk->flags|= GENHD_FL_SUPPRESS_PARTITION_INFO;
-	sprintf(disk->disk_name, "cdisk%d", i);
+	sprintf(disk->disk_name, "cdisk%d", num);
 	set_capacity(disk, CDISK_IN_SECTORS_SIZE);
 
 	return device;
@@ -151,6 +289,8 @@ out_free_queue:
 	blk_cleanup_queue(device->queue);
 out_free_device:
 	kfree(device);
+out_free_num:
+	cdisk_num_free(num);
 out:
 	return NULL;
 }
@@ -180,11 +320,13 @@ static int __init cdisk_init(void)
 		return -EIO;
 	}
 	cdisk_major = major;
-	device = cdisk_alloc(0);
+	device = cdisk_alloc();
 	if (!device) {
 		klog(KL_ERR, "cant alloc disk");
 		goto out_unreg;
 	}
+
+	device->flags|= CDISK_FLAGS_CTL; //mark device as ctl device
 	list_add_tail(&device->devices_list, &cdisk_devices);
 	add_disk(device->disk);
 
@@ -212,8 +354,10 @@ static void __exit cdisk_exit(void)
 
 	klog(KL_INFO, "exit");
 
+	mutex_lock(&cdisk_devices_lock);
 	list_for_each_entry_safe(device, next, &cdisk_devices, devices_list)
 		cdisk_del_one(device);
+	mutex_unlock(&cdisk_devices_lock);
 
 	if (cdisk_major != -1) {
 		unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
