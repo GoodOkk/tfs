@@ -38,7 +38,7 @@ struct cdisk_device {
 
 	struct request_queue	*queue;
 	struct gendisk		*disk;
-	struct list_head	list_entry;
+	struct list_head	devices_list;
 
 	/*
 	 * Backing store of pages and lock to protect it. This is the contents
@@ -51,7 +51,7 @@ struct cdisk_device {
 /*
  * Look up and return a brd's page for a given sector.
  */
-static DEFINE_MUTEX(mutex);
+static DEFINE_MUTEX(cdisk_devices_lock);
 
 static LIST_HEAD(cdisk_devices);
 
@@ -89,9 +89,22 @@ static int cdisk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd
 	return error;
 }
 
+
+static int cdisk_direct_access(struct block_device *bdev, sector_t sector,
+	void **kaddr, unsigned long *pfn)
+{
+	struct cdisk_device *device = bdev->bd_disk->private_data;
+	int error = -EINVAL;
+
+	klog(KL_INFO, "device=%p", device);
+	
+	return error;
+}
+
 static const struct block_device_operations cdisk_fops = {
 	.owner = THIS_MODULE,
 	.ioctl = cdisk_ioctl,
+	.direct_access = cdisk_direct_access,
 };
 
 static struct cdisk_device *cdisk_alloc(int i)
@@ -158,21 +171,50 @@ static void cdisk_free(struct cdisk_device *device)
 static int __init cdisk_init(void)
 {	
 	int major = -1;
+	struct cdisk_device *device = NULL;
+
 	klog(KL_INFO, "init");	
 	major = register_blkdev(0, CDISK_DEV_NAME);
 	if (major < 0) {
 		klog(KL_INFO, "register_blkdev failed, result=%d", major);
 		return -EIO;
 	}
-
 	cdisk_major = major;
-	klog(KL_INFO, "module loaded, major=%d", major);
+	device = cdisk_alloc(0);
+	if (!device) {
+		klog(KL_ERR, "cant alloc disk");
+		goto out_unreg;
+	}
+	list_add_tail(&device->devices_list, &cdisk_devices);
+	add_disk(device->disk);
+
+	klog(KL_INFO, "module loaded, major=%d, device=%p", major, device);
 	return 0;
+
+out_unreg:
+	if (cdisk_major != -1) {
+		unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
+		cdisk_major = -1;
+	}
+	return -ENOMEM;
+}
+
+static void cdisk_del_one(struct cdisk_device *device)
+{
+	list_del(&device->devices_list);
+	del_gendisk(device->disk);
+	cdisk_free(device);
 }
 
 static void __exit cdisk_exit(void)
 {
+	struct cdisk_device *device, *next;
+
 	klog(KL_INFO, "exit");
+
+	list_for_each_entry_safe(device, next, &cdisk_devices, devices_list)
+		cdisk_del_one(device);
+
 	if (cdisk_major != -1) {
 		unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
 		cdisk_major = -1;
