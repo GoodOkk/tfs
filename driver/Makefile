@@ -7,6 +7,7 @@ KVERSION = $(shell uname -r)
 
 all:
 	make -C /lib/modules/$(KVERSION)/build M=$(PWD) modules
+	cp cdisk_mod.ko ../bin/cdisk_mod.ko
 clean:
 	make -C /lib/modules/$(KVERSION)/build M=$(PWD) clean
-
+	rm -r -f ../bin/cdisk_mod.ko

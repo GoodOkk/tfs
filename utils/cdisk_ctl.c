@@ -8,7 +8,7 @@
 #include <errno.h>
 #include <malloc.h>
 
-#include <driver/linux/include/cdisk_cmd.h>
+#include <cdisk_cmd.h>
 
 
 void usage()
