@@ -68,6 +68,8 @@ int main(int argc, char *argv[])
     	if (strncmp(argv[1], CREATE_OPT, strlen(CREATE_OPT) + 1) == 0) {
 		int disk_num = -1;
 		error = cdisk_create(&disk_num);
+		if (!error)
+			printf("created disk with num=%d\n", disk_num);
 		goto out;
     	} else {
 		usage();
@@ -76,6 +78,9 @@ int main(int argc, char *argv[])
 	}
 
 out:
+	if (error)
+		printf("error - %d\n", error);
+
 	return error;
 }
 
