@@ -139,8 +139,20 @@ static int cdisk_create(int *disk_num)
 static int cdisk_delete(int disk_num)
 {
 	int error = -EINVAL;
+	struct cdisk_device *device = NULL;
 
-	klog(KL_ERR, "not implemented yet");
+	klog(KL_INFO, "disk_num=%d\n", disk_num);
+	
+	mutex_lock(&cdisk_devices_lock);
+	list_for_each_entry(device, &cdisk_devices, devices_list) {
+		if (device->number == disk_num) {
+			cdisk_del_one(device);
+			error = 0;			
+			break;
+		}	
+	}
+	mutex_unlock(&cdisk_devices_lock);
+
 	return error;
 }
 
@@ -184,19 +196,20 @@ static int cdisk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd
 		goto out_free_params;
 	}
 	
+	error = 0;
 	switch (cmd) {
 		case IOCTL_HELLO:
 			klog(KL_INFO, "hello from user mode");
-			error = 0;
+			params->error = 0;
 			break;
 		case IOCTL_DISK_CREATE:
-			error = cdisk_create(&params->u.create.disk_num);	
+			params->error = cdisk_create(&params->u.create.disk_num);	
 			break;
 		case IOCTL_DISK_DELETE:
-			error = cdisk_delete(params->u.delete.disk_num);
+			params->error = cdisk_delete(params->u.delete.disk_num);
 			break;
 		case IOCTL_DISK_SETUP:
-			error = cdisk_setup(params->u.delete.disk_num);
+			params->error = cdisk_setup(params->u.delete.disk_num);
 			break;
 		default:
 			klog(KL_ERR, "unknown ioctl=%d", cmd);
@@ -204,7 +217,6 @@ static int cdisk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd
 			break;
 	}
 	
-	params->error = error;
 
 	if (copy_to_user((void *)arg, params, sizeof(struct cdisk_params))) {
 		error = -EFAULT;

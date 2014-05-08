@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
@@ -13,7 +14,7 @@
 
 static void usage(void)
 {
-    	printf("cdisk_ctl --create\n");
+    	printf("Usage:\ncdisk_ctl --create\ncdisk_ctl --delete DISK_NUM\n");
 }
 
 static int cdisk_ctl_open(int *fd)
@@ -47,19 +48,51 @@ static int cdisk_create(int *disk_num)
 	if (error)
 		goto out;
 	
+	error = params.error;
+	if (error)
+		goto out;
+
 	*disk_num = params.u.create.disk_num;
 out:
 	close(fd);
 	return error;
 }
 
+static int cdisk_delete(int disk_num)
+{
+	int error = -EINVAL;
+	int fd = -1;
+	struct cdisk_params params;
+
+	error = cdisk_ctl_open(&fd);
+	if (error)
+		return error;
+	
+	memset(&params, 0, sizeof(struct cdisk_params));
+	params.u.delete.disk_num = disk_num;
+
+	error = ioctl(fd, IOCTL_DISK_DELETE, &params);
+	if (error)
+		goto out;
+
+	error = params.error;
+	if (error)
+		goto out;
+
+out:
+	close(fd);
+	return error;
+}
+
+
 #define CREATE_OPT "--create"
+#define DELETE_OPT "--delete"
 
 int main(int argc, char *argv[])
 {
     	int error = -EINVAL;
     
-    	if (argc != 2) {
+    	if (argc < 2) {
     		usage();
     	    	error = -EINVAL;
 		goto out;
@@ -71,7 +104,21 @@ int main(int argc, char *argv[])
 		if (!error)
 			printf("created disk with num=%d\n", disk_num);
 		goto out;
-    	} else {
+    	} else if (strncmp(argv[1], DELETE_OPT, strlen(DELETE_OPT) + 1) == 0) {
+		int disk_num = -1;
+		if (argc != 3) {
+			usage();
+			error = -EINVAL;
+			goto out;
+		}
+		disk_num = strtol(argv[2], NULL, 10);
+		printf("disk num for deletion is %d\n", disk_num);
+		error = cdisk_delete(disk_num);
+		if (!error)
+			printf("deleted disk with num=%d\n", disk_num);
+		goto out;
+
+	} else {
 		usage();
 		error = -EINVAL;
 		goto out;
@@ -80,6 +127,8 @@ int main(int argc, char *argv[])
 out:
 	if (error)
 		printf("error - %d\n", error);
+	else
+		printf("success\n");
 
 	return error;
 }
