@@ -31,7 +31,7 @@
 #define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - SECTOR_SHIFT)
 #define PAGE_SECTORS		(1 << PAGE_SECTORS_SHIFT)
 
-#define CDISK_IN_SECTORS_SIZE 100
+#define CDISK_IN_SECTORS_SIZE 10
 
 struct cdisk_device {
 	int		number;
