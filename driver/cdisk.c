@@ -317,6 +317,7 @@ static void cdisk_free(struct cdisk_device *device)
 	put_disk(device->disk);
 	blk_cleanup_queue(device->queue);
 	cdisk_free_pages(device);
+	cdisk_num_free(device->number);
 	kfree(device);
 }
 
