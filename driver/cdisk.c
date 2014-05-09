@@ -30,7 +30,23 @@
 #define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - SECTOR_SHIFT)
 #define PAGE_SECTORS		(1 << PAGE_SECTORS_SHIFT)
 
-#define CDISK_IN_SECTORS_SIZE 128
+
+#define SECTOR_SIZE  (PAGE_SIZE/PAGE_SECTORS)
+
+
+#define ONE_MB (1024*1024)
+
+#define MB_SHIFT 20
+#define MB_PAGES_SHIFT (MB_SHIFT - PAGE_SHIFT)
+#define MB_SECTORS_SHIFT (MB_SHIFT - SECTOR_SHIFT) //11
+#define MB_PAGES (ONE_MB/PAGE_SIZE)
+#define MB_SECTORS (ONE_MB/SECTOR_SIZE)
+
+
+#define CDISK_SIZE_IN_MB 100
+#define CDISK_SIZE (CDISK_SIZE_IN_MB*ONE_MB)
+
+#define CDISK_IN_SECTORS_SIZE (CDISK_SIZE/SECTOR_SIZE)
 
 
 #define CDISK_FLAGS_CTL		(1 << 0)
@@ -43,13 +59,8 @@ struct cdisk_device {
 	struct gendisk		*disk;
 	struct list_head	devices_list;
 
-	/*
-	 * Backing store of pages and lock to protect it. This is the contents
-	 * of the block device.
-	 */
 	spinlock_t		lock;
-	void			*data;
-	int			data_size;
+	void			*blocks[CDISK_SIZE_IN_MB];
 };
 
 static int cdisk_num_alloc(void);
@@ -106,17 +117,208 @@ static int cdisk_is_ctl(struct cdisk_device *device)
 	return (device->flags & CDISK_FLAGS_CTL) ? 1 : 0;
 }
 
+
+static void *cdisk_lookup_sector(struct cdisk_device *device, sector_t sector)
+{
+	unsigned long block_idx;
+	void *block = NULL;
+
+	block_idx = sector >> MB_SECTORS_SHIFT;
+	block = device->blocks[block_idx];
+	if (!block)
+		return NULL;
+	
+	return (void *)((unsigned long)block + ((sector - block_idx*MB_SECTORS) << SECTOR_SHIFT));		
+}
+
+static void cdisk_zero_sector(struct cdisk_device *device, sector_t sector)
+{
+	void *sec_addr = NULL;
+	sec_addr = cdisk_lookup_sector(device, sector);
+	if (!sec_addr)
+		return;
+
+	memset(sec_addr, 0, SECTOR_SIZE);
+}
+
+static void cdisk_zero_sector_bytes(struct cdisk_device *device, sector_t sector, size_t n)
+{
+	void *sec_addr = NULL;
+
+	BUG_ON(n >= SECTOR_SIZE);
+	sec_addr = cdisk_lookup_sector(device, sector);
+	if (!sec_addr)
+		return;
+
+	memset(sec_addr, 0, n);
+}
+
+static void *cdisk_alloc_sector(struct cdisk_device *device, sector_t sector)
+{
+	unsigned long block_idx;
+	void *sec_addr = NULL;
+
+	sec_addr = cdisk_lookup_sector(device, sector);
+	if (!sec_addr) {
+		void *block = NULL;
+		block_idx = sector >> MB_SECTORS_SHIFT;
+		block = vmalloc(ONE_MB);
+		if (!block)
+			return NULL;
+		spin_lock(&device->lock);
+		if (!device->blocks[block_idx]) {
+			device->blocks[block_idx] = block;
+			block = NULL;
+		}
+		spin_unlock(&device->lock);
+		if (block)
+			vfree(block);
+		sec_addr = cdisk_lookup_sector(device, sector);
+	}
+
+	return sec_addr;
+}
+
+static int cdisk_copy_to_setup(struct cdisk_device *device, sector_t sector,
+	size_t n)
+{	
+	while (n >= SECTOR_SIZE) {
+		if (!cdisk_alloc_sector(device, sector))
+			return -ENOMEM;
+
+		n-= SECTOR_SIZE;
+		sector+= 1;
+	};
+	
+	if (n) 
+		if (!cdisk_alloc_sector(device, sector))
+			return -ENOMEM;
+
+	return 0;
+}
+
+static void cdisk_discard(struct cdisk_device *device, sector_t sector, size_t n)
+{
+	while (n >= SECTOR_SIZE) {
+		cdisk_zero_sector(device, sector);
+		n-= SECTOR_SIZE;
+		sector+= 1;
+	};
+	
+	if (n) 
+		cdisk_zero_sector_bytes(device, sector, n);
+	
+}
+//Copy n bytes from device at sector to dst
+static void cdisk_copy_from(struct cdisk_device *device, void *dst, sector_t sector, size_t n)
+{
+	void *sec_addr = NULL;
+	unsigned long off = 0;
+	
+	while (n >= SECTOR_SIZE) {
+		sec_addr = cdisk_lookup_sector(device, sector);
+		if (sec_addr)
+			memcpy((void *)((unsigned long)dst + off), sec_addr, SECTOR_SIZE); 
+		else
+			memset((void *)((unsigned long)dst + off), 0, SECTOR_SIZE);
+
+		off+= SECTOR_SIZE;
+		n-= SECTOR_SIZE;
+		sector+= 1;
+	};
+	//copy rest n bytes	
+	if (n) { 
+		sec_addr = cdisk_lookup_sector(device, sector);
+		if (sec_addr)
+			memcpy((void *)((unsigned long)dst + off), sec_addr, n); 
+		else
+			memset((void *)((unsigned long)dst + off), 0, n);
+	}
+}
+
+//Copy n bytes from src to devices at sector 
+static void cdisk_copy_to(struct cdisk_device *device, const void *src, sector_t sector, size_t n)
+{
+	void *sec_addr = NULL;
+	unsigned long off = 0;
+	
+	while (n >= SECTOR_SIZE) {
+		sec_addr = cdisk_lookup_sector(device, sector);
+		BUG_ON(!sec_addr);
+		memcpy(sec_addr, (void *)((unsigned long)src + off), SECTOR_SIZE); 
+		off+= SECTOR_SIZE;
+		n-= SECTOR_SIZE;
+		sector+= 1;
+	};
+	//copy rest n bytes	
+	if (n) { 
+		sec_addr = cdisk_lookup_sector(device, sector);
+		BUG_ON(!sec_addr);
+		memcpy(sec_addr, (void *)((unsigned long)src + off), n); 
+	}
+}
+
+static int cdisk_do_bvec(struct cdisk_device *device, struct page *page,
+	unsigned int len, unsigned int off, int rw, sector_t sector)
+{
+	void *mem = NULL;
+	int err = 0;
+	if (rw != READ) {
+		err = cdisk_copy_to_setup(device, sector, len);
+		if (err)
+			goto out;
+	}
+	mem = kmap_atomic(page);
+	if (rw == READ) {
+		cdisk_copy_from(device, (void *)((unsigned long)mem + off), sector, len);
+		flush_dcache_page(page);
+	} else {
+		flush_dcache_page(page);
+		cdisk_copy_to(device, (void *)((unsigned long)mem + off), sector, len);
+	}
+	kunmap_atomic(mem);
+out:
+	return err;
+}
+
+
 static void cdisk_make_request(struct request_queue *q, struct bio *bio)
 {
 	struct block_device *bdev = bio->bi_bdev;
 	struct cdisk_device *device = bdev->bd_disk->private_data;
+	int rw;
+	struct bio_vec bvec;
+	sector_t sector;
+	struct bvec_iter iter;
 	int err = -EIO;
+
 	if (cdisk_is_ctl(device)) {
 		klog(KL_INFO, "device=%p is ctl device, so ignore I/O", device);
 		err = -EIO;
 		goto out;
 	}
-	klog(KL_INFO, "device=%p", device);
+	
+	sector = bio->bi_iter.bi_sector;
+	if (bio_end_sector(bio) > get_capacity(bdev->bd_disk))
+		goto out;
+
+	if (unlikely(bio->bi_rw & REQ_DISCARD)) {
+		err = 0;
+		cdisk_discard(device, sector, bio->bi_iter.bi_size);
+		goto out;
+	}	
+	rw = bio_rw(bio);
+	if (rw == READA)
+		rw = READ;
+
+	bio_for_each_segment(bvec, bio, iter) {
+		unsigned int len = bvec.bv_len;
+		err = cdisk_do_bvec(device, bvec.bv_page, len,
+			bvec.bv_offset, rw, sector);
+		if (err)
+			break;
+		sector+= len >> SECTOR_SHIFT;
+	}
 out:
 	bio_endio(bio, err);
 }
@@ -132,14 +334,8 @@ static int cdisk_create(int *disk_num)
 		goto out;
 	}
 
-	device->data_size = (CDISK_IN_SECTORS_SIZE/PAGE_SECTORS)*PAGE_SIZE;
-	device->data = vmalloc(device->data_size);
-	if (!device->data) {
-		error = -ENOMEM;
-		goto out_dev_free;
-	}
 
-	klog(KL_INFO, "created device=%p, num=%d, data_size=%d\n", device, device->number, device->data_size);
+	klog(KL_INFO, "created device=%p, num=%d\n", device, device->number);
 
 	mutex_lock(&cdisk_devices_lock);
 	list_add_tail(&device->devices_list, &cdisk_devices);
@@ -148,8 +344,6 @@ static int cdisk_create(int *disk_num)
 	*disk_num = device->number;
 	return 0;
 
-out_dev_free:
-	cdisk_free(device);
 out:
 	return error;
 }
@@ -247,7 +441,7 @@ out:
 	return error;
 }
 
-
+/*
 static int cdisk_direct_access(struct block_device *bdev, sector_t sector,
 	void **kaddr, unsigned long *pfn)
 {
@@ -263,11 +457,12 @@ static int cdisk_direct_access(struct block_device *bdev, sector_t sector,
 out:	
 	return error;
 }
+*/
 
 static const struct block_device_operations cdisk_fops = {
 	.owner = THIS_MODULE,
 	.ioctl = cdisk_ioctl,
-	.direct_access = cdisk_direct_access,
+//	.direct_access = cdisk_direct_access,
 };
 
 static struct cdisk_device *cdisk_alloc(void)
@@ -326,8 +521,18 @@ out:
 
 static void cdisk_free_pages(struct cdisk_device *device)
 {
-	if (device->data)
-		vfree(device->data);
+	int i = 0;
+	void *block = NULL;
+
+	for (i = 0; i < CDISK_SIZE_IN_MB; i++) {
+		spin_lock(&device->lock);
+		block = device->blocks[i];
+		device->blocks[i] = NULL;
+		spin_unlock(&device->lock);
+		
+		if (block)
+			vfree(block);
+	}
 }
 
 static void cdisk_free(struct cdisk_device *device)
