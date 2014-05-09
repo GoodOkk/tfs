@@ -18,7 +18,7 @@
 #include <linux/mutex.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
-
+#include <linux/cdrom.h>
 #include <asm/uaccess.h>
 
 #include "klog.h"
@@ -62,7 +62,16 @@ struct cdisk_device {
 	spinlock_t		lock;
 	int			blocks_count;
 	void			**blocks;
+	atomic_t		writes;
+	atomic_t		reads;
+	atomic_t		write_bytes;
+	atomic_t		read_bytes;
 };
+
+
+static struct workqueue_struct *cdisk_wq;
+
+static struct timer_list cdisk_timer;
 
 static int cdisk_num_alloc(void);
 static void cdisk_num_free(int num);
@@ -276,10 +285,14 @@ static int cdisk_do_bvec(struct cdisk_device *device, struct page *page,
 	mem = kmap_atomic(page);
 	if (rw == READ) {
 		cdisk_copy_from(device, (void *)((unsigned long)mem + off), sector, len);
+		atomic_add(1, &device->reads);
+		atomic_add(len, &device->read_bytes);
 		flush_dcache_page(page);
 	} else {
 		flush_dcache_page(page);
 		cdisk_copy_to(device, (void *)((unsigned long)mem + off), sector, len);
+		atomic_add(1, &device->writes);
+		atomic_add(len, &device->write_bytes);
 	}
 	kunmap_atomic(mem);
 out:
@@ -298,7 +311,7 @@ static void cdisk_make_request(struct request_queue *q, struct bio *bio)
 	int err = -EIO;
 
 	if (cdisk_is_ctl(device)) {
-		klog(KL_INFO, "device=%p is ctl device, so ignore I/O", device);
+		//klog(KL_INFO, "device=%p is ctl device, so ignore I/O", device);
 		err = -EIO;
 		goto out;
 	}
@@ -394,8 +407,19 @@ static int cdisk_ioctl_disk(struct cdisk_device *device, struct block_device *bd
 {
 	int error = -EINVAL;
 	
-	klog(KL_INFO, "device=%p, cmd=%u, arg=%p", device, cmd, arg);
-	klog(KL_ERR, "not implemented yet");
+	switch (cmd) {
+		case BLKFLSBUF:
+			klog(KL_INFO, "device=%p,  BLKFLSBUF");
+			error = 0;
+			break;
+		case CDROM_GET_CAPABILITY:
+			error = -ENOIOCTLCMD;
+			break;
+		default:
+			error = -EINVAL;
+			klog(KL_ERR, "%d not implemented yet", cmd);
+	}
+
 	return error;
 }
 
@@ -405,7 +429,7 @@ static int cdisk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd
 	struct cdisk_device *device = bdev->bd_disk->private_data;
 	struct cdisk_params *params = NULL;	
 
-	klog(KL_INFO, "device=%p, cmd=%u, arg=%p", device, cmd, arg);
+	//klog(KL_INFO, "device=%p, cmd=%u, arg=%p", device, cmd, arg);
 	
 	if (!cdisk_is_ctl(device)) {
 		return cdisk_ioctl_disk(device, bdev, mode, cmd, arg);
@@ -563,61 +587,124 @@ static void cdisk_free(struct cdisk_device *device)
 	kfree(device);
 }
 
+static void cdisk_stats_log(struct cdisk_device *device)
+{
+	klog(KL_INFO, "dev=%p, num=%d, reads=%u, writes=%u, read_bytes=%u, write_bytes=%u", device, device->number,
+		device->reads, device->writes, device->read_bytes, device->write_bytes);
+}
+
+static void cdisk_stats_work(struct work_struct *work)
+{
+	struct cdisk_device *device, *next;
+
+	mutex_lock(&cdisk_devices_lock);
+
+	list_for_each_entry_safe(device, next, &cdisk_devices, devices_list)
+		cdisk_stats_log(device);
+
+	mutex_unlock(&cdisk_devices_lock);
+
+	kfree(work);
+}
+	
+static void cdisk_timer_callback(unsigned long data)
+{
+	struct work_struct *work = NULL;
+	work = kmalloc(sizeof(struct work_struct), GFP_ATOMIC);
+	if (!work)
+		klog(KL_ERR, "cant alloc work");
+
+	if (work) { 
+		INIT_WORK(work, cdisk_stats_work);
+		if (!queue_work(cdisk_wq, work)) {
+			kfree(work);
+			klog(KL_ERR, "cant queue work");
+		}
+	}
+}
+
 static int __init cdisk_init(void)
 {	
-	int major = -1;
 	struct cdisk_device *device = NULL;
+	int error = -EINVAL;
 
-	klog(KL_INFO, "init");	
-	major = register_blkdev(0, CDISK_DEV_NAME);
-	if (major < 0) {
-		klog(KL_INFO, "register_blkdev failed, result=%d", major);
-		return -EIO;
+	klog(KL_INFO, "init");
+	
+	cdisk_major = register_blkdev(0, CDISK_DEV_NAME);
+	if (cdisk_major < 0) {
+		klog(KL_ERR, "register_blkdev failed, result=%d", cdisk_major);
+		error = -EIO;
+		goto out;
 	}
-	cdisk_major = major;
+	
+	cdisk_wq = alloc_workqueue("cdisk-wq", WQ_MEM_RECLAIM|WQ_UNBOUND, 2);
+	if (!cdisk_wq) {
+		klog(KL_ERR, "cant create wq");
+		error = -ENOMEM;
+		goto out_unreg_dev;
+	}
+
+	setup_timer(&cdisk_timer, cdisk_timer_callback, 0);
+	error = mod_timer(&cdisk_timer, jiffies + msecs_to_jiffies(20000));
+	if (error) {
+		klog(KL_ERR, "mod_timer failed with err=%d", error);
+		goto out_del_wq;
+	}	
+
 	device = cdisk_alloc();
 	if (!device) {
 		klog(KL_ERR, "cant alloc disk");
-		goto out_unreg;
+		error = -ENOMEM;
+		goto out_del_timer;
 	}
 
 	device->flags|= CDISK_FLAGS_CTL; //mark device as ctl device
+	
+	mutex_lock(&cdisk_devices_lock);
 	list_add_tail(&device->devices_list, &cdisk_devices);
+	mutex_unlock(&cdisk_devices_lock);
 	add_disk(device->disk);
 
-	klog(KL_INFO, "module loaded, major=%d, device=%p", major, device);
+	klog(KL_INFO, "module loaded, major=%d, device=%p", cdisk_major, device);
 	return 0;
 
-out_unreg:
-	if (cdisk_major != -1) {
-		unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
-		cdisk_major = -1;
-	}
-	return -ENOMEM;
+out_del_timer:
+	del_timer(&cdisk_timer);
+out_del_wq:
+	destroy_workqueue(cdisk_wq);
+out_unreg_dev:
+	unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
+out:
+	return error;
 }
 
 static void cdisk_del_one(struct cdisk_device *device)
 {
+	klog(KL_INFO, "deleting disk %p, num %d\n", device, device->number);
+
 	list_del(&device->devices_list);
 	del_gendisk(device->disk);
 	cdisk_free(device);
+	klog(KL_INFO, "deleted disk %p, num %d\n", device, device->number);
 }
 
 static void __exit cdisk_exit(void)
 {
 	struct cdisk_device *device, *next;
 
-	klog(KL_INFO, "exit");
+	klog(KL_INFO, "exiting");
+
+	del_timer(&cdisk_timer);	
+	destroy_workqueue(cdisk_wq);
+	klog(KL_INFO, "going delete disks");
 
 	mutex_lock(&cdisk_devices_lock);
 	list_for_each_entry_safe(device, next, &cdisk_devices, devices_list)
 		cdisk_del_one(device);
 	mutex_unlock(&cdisk_devices_lock);
 
-	if (cdisk_major != -1) {
-		unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
-		cdisk_major = -1;
-	}
+	unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
+
 	klog(KL_INFO, "exited");
 }
 
