@@ -60,7 +60,8 @@ struct cdisk_device {
 	struct list_head	devices_list;
 
 	spinlock_t		lock;
-	void			*blocks[CDISK_SIZE_IN_MB];
+	int			blocks_count;
+	void			**blocks;
 };
 
 static int cdisk_num_alloc(void);
@@ -124,6 +125,9 @@ static void *cdisk_lookup_sector(struct cdisk_device *device, sector_t sector)
 	void *block = NULL;
 
 	block_idx = sector >> MB_SECTORS_SHIFT;
+	
+	BUG_ON(block_idx >= device->blocks_count);
+
 	block = device->blocks[block_idx];
 	if (!block)
 		return NULL;
@@ -162,6 +166,7 @@ static void *cdisk_alloc_sector(struct cdisk_device *device, sector_t sector)
 	if (!sec_addr) {
 		void *block = NULL;
 		block_idx = sector >> MB_SECTORS_SHIFT;
+		BUG_ON(block_idx >= device->blocks_count);
 		block = vmalloc(ONE_MB);
 		if (!block)
 			return NULL;
@@ -334,6 +339,13 @@ static int cdisk_create(int *disk_num)
 		goto out;
 	}
 
+	device->blocks_count = CDISK_SIZE_IN_MB;
+	device->blocks = vmalloc(device->blocks_count*sizeof(void *));
+	if (!device->blocks) {
+		error = -ENOMEM;
+		goto free_device;
+	}
+	memset(device->blocks, 0, device->blocks_count*sizeof(void *));
 
 	klog(KL_INFO, "created device=%p, num=%d\n", device, device->number);
 
@@ -344,6 +356,8 @@ static int cdisk_create(int *disk_num)
 	*disk_num = device->number;
 	return 0;
 
+free_device:
+	cdisk_free(device);
 out:
 	return error;
 }
@@ -524,7 +538,7 @@ static void cdisk_free_pages(struct cdisk_device *device)
 	int i = 0;
 	void *block = NULL;
 
-	for (i = 0; i < CDISK_SIZE_IN_MB; i++) {
+	for (i = 0; i < device->blocks_count; i++) {
 		spin_lock(&device->lock);
 		block = device->blocks[i];
 		device->blocks[i] = NULL;
@@ -532,6 +546,11 @@ static void cdisk_free_pages(struct cdisk_device *device)
 		
 		if (block)
 			vfree(block);
+	}
+
+	if (device->blocks) {
+		vfree(device->blocks);
+		device->blocks = NULL;
 	}
 }
 
