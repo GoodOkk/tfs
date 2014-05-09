@@ -1,12 +1,5 @@
 /*
- * Ram backed block device driver.
- *
- * Copyright (C) 2007 Nick Piggin
- * Copyright (C) 2007 Novell Inc.
- *
- * Parts derived from drivers/block/rd.c, and drivers/block/loop.c, copyright
- * of their respective owners.
- */
+*/
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -19,6 +12,9 @@
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/cdrom.h>
+#include <linux/workqueue.h>
+#include <linux/timer.h>
+
 #include <asm/uaccess.h>
 
 #include "klog.h"
@@ -517,6 +513,11 @@ static struct cdisk_device *cdisk_alloc(void)
 	if (!device)
 		goto out_free_num;
 
+	atomic_set(&device->reads, 0);
+	atomic_set(&device->writes, 0);
+	atomic_set(&device->read_bytes, 0);
+	atomic_set(&device->write_bytes, 0);
+
 	device->number = num;
 	spin_lock_init(&device->lock);
 	device->queue = blk_alloc_queue(GFP_KERNEL);
@@ -589,7 +590,7 @@ static void cdisk_free(struct cdisk_device *device)
 
 static void cdisk_stats_log(struct cdisk_device *device)
 {
-	klog(KL_INFO, "dev=%p, num=%d, reads=%u, writes=%u, read_bytes=%u, write_bytes=%u", device, device->number,
+	klog(KL_INFO, "dev=%p, num=%d, reads=%d, writes=%d, read_bytes=%d, write_bytes=%d", device, device->number,
 		device->reads, device->writes, device->read_bytes, device->write_bytes);
 }
 
@@ -610,6 +611,9 @@ static void cdisk_stats_work(struct work_struct *work)
 static void cdisk_timer_callback(unsigned long data)
 {
 	struct work_struct *work = NULL;
+
+	klog(KL_INFO, "in timer");
+
 	work = kmalloc(sizeof(struct work_struct), GFP_ATOMIC);
 	if (!work)
 		klog(KL_ERR, "cant alloc work");
@@ -621,6 +625,7 @@ static void cdisk_timer_callback(unsigned long data)
 			klog(KL_ERR, "cant queue work");
 		}
 	}
+	mod_timer(&cdisk_timer, jiffies + msecs_to_jiffies(20000));
 }
 
 static int __init cdisk_init(void)
@@ -669,7 +674,7 @@ static int __init cdisk_init(void)
 	return 0;
 
 out_del_timer:
-	del_timer(&cdisk_timer);
+	del_timer_sync(&cdisk_timer);
 out_del_wq:
 	destroy_workqueue(cdisk_wq);
 out_unreg_dev:
@@ -685,7 +690,7 @@ static void cdisk_del_one(struct cdisk_device *device)
 	list_del(&device->devices_list);
 	del_gendisk(device->disk);
 	cdisk_free(device);
-	klog(KL_INFO, "deleted disk %p, num %d\n", device, device->number);
+	klog(KL_INFO, "deleted disk %p\n", device);
 }
 
 static void __exit cdisk_exit(void)
@@ -694,7 +699,7 @@ static void __exit cdisk_exit(void)
 
 	klog(KL_INFO, "exiting");
 
-	del_timer(&cdisk_timer);	
+	del_timer_sync(&cdisk_timer);	
 	destroy_workqueue(cdisk_wq);
 	klog(KL_INFO, "going delete disks");
 
@@ -710,3 +715,6 @@ static void __exit cdisk_exit(void)
 
 module_init(cdisk_init);
 module_exit(cdisk_exit);
+
+MODULE_LICENSE("GPL");
+
