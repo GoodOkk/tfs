@@ -45,11 +45,12 @@
 #define CDISK_FLAGS_DELETING	(1 << 1)
 
 struct cdisk_block {
-	void 		*data;
-	int		size;
-	atomic_t 	dirty;
-	struct mutex 	mutex;
-	spinlock_t	lock;
+	void 			*data;
+	int			size;
+	atomic_t 		dirty;
+	struct mutex 		mutex;
+	spinlock_t		lock;
+	struct list_head 	blocks_list;
 };
 
 struct cdisk_device {
@@ -91,6 +92,7 @@ static struct cdisk_block * cdisk_block_alloc(void)
 	atomic_set(&block->dirty, 0);
 	mutex_init(&block->mutex);
 	spin_lock_init(&block->lock);
+	INIT_LIST_HEAD(&block->blocks_list);
 
 	block->size = CBLOCK_SIZE;
 	block->data = vmalloc(block->size);
@@ -105,6 +107,7 @@ out:
 
 static void cdisk_block_free(struct cdisk_block *block)
 {
+	BUG_ON(!list_empty(block->blocks_list));
 	vfree(block->data);
 	kfree(block);
 }
