@@ -21,14 +21,19 @@ sudo bin/cdisk_ctl --create
 
 sudo /sbin/mkfs -t ext4 /dev/cdisk1 
   	"format device space to ext4 fs"
+
 sudo mkdir /mnt/mnt_point 
   	"create mount point"
+
 sudo mount -t ext4 /dev/cdisk1 /mnt/mnt_point 
   	"mount file system to dir"
+
 sudo cd /mnt/mnt_point && ... 
   	"work inside ext4 on our device"
+
 sudo umount /mnt/mnt_point
  	"umount file system"
+
 sudo bin/cdisk_ctl --destroy 1
   	"delete device"
 
