@@ -21,12 +21,24 @@ ch.setFormatter(formatter)
 log.addHandler(ch)
 
 
+BS = 512
+CDISK_MNT_DIR = '/tmp/cdisk_dir'
+CDISK_DEV = '/dev/cdisk1'
+USER = 'andrey'
+FS_TYPE = 'ext4'
 
 def test():
     try:
         cmd.exec_cmd2('insmod ' + settings.CDISK_MOD_KO_P, throw = True)
         cmd.exec_cmd2(settings.CDISK_CTL_P + ' --create', throw = True)
-        cmd.exec_cmd2('dd if=/dev/zero of=/dev/cdisk1 bs=512', throw = True)  
+        cmd.exec_cmd2('dd if=/dev/zero of=' + CDISK_DEV + ' bs=' + str(BS) + ' count=' + str(settings.CDISK_SIZE//BS), throw = True)
+        cmd.exec_cmd2('/sbin/mkfs -t ' + FS_TYPE + ' ' +  CDISK_DEV)
+        cmd.exec_cmd2('rm -r -f ' + CDISK_MNT_DIR)
+        cmd.exec_cmd2('mkdir ' + CDISK_MNT_DIR, throw = True)
+        cmd.exec_cmd2('mount -t ' + FS_TYPE + ' ' + CDISK_DEV + ' ' + CDISK_MNT_DIR)
+        cmd.exec_cmd2('dd if=/dev/zero of=' + os.path.join(CDISK_MNT_DIR, 'random.txt') + ' bs=' + str(BS) + ' count=1000')
+        cmd.exec_cmd2('du -ah ' + CDISK_MNT_DIR)
+        cmd.exec_cmd2('umount ' + CDISK_MNT_DIR)
     except Exception as e:
         log.exception(str(e))
     finally:
