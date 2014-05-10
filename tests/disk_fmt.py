@@ -31,7 +31,7 @@ def test():
         log.exception(str(e))
     finally:
         try:
-            cmd.exec_cmd2('rmmod ' + settings.CDISK_MOD)
+            cmd.exec_cmd2('rmmod ' + settings.CDISK_MOD, throw = True)
         except Exception as e:
             log.exception(str(e))
 

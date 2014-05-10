@@ -107,7 +107,7 @@ out:
 
 static void cdisk_block_free(struct cdisk_block *block)
 {
-	BUG_ON(!list_empty(block->blocks_list));
+	BUG_ON(!list_empty(&block->blocks_list));
 	vfree(block->data);
 	kfree(block);
 }
