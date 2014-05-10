@@ -39,6 +39,7 @@ def test():
         cmd.exec_cmd2('dd if=/dev/zero of=' + os.path.join(CDISK_MNT_DIR, 'random.txt') + ' bs=' + str(BS) + ' count=1000')
         cmd.exec_cmd2('du -ah ' + CDISK_MNT_DIR)
         cmd.exec_cmd2('umount ' + CDISK_MNT_DIR)
+        cmd.exec_cmd2(settings.CDISK_CTL_P + ' --delete 1', throw = True)
     except Exception as e:
         log.exception(str(e))
     finally:
