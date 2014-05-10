@@ -5,13 +5,14 @@ cloud disk - linux block device with data backend in web/cloud.
 
 BUILD:
 make
+
 BUILD CLEAN:
 make clean
 
-INSTALL
+INSTALL:
 sudo insmod bin/cdisk_mod.ko
 
-UNINSTALL
+UNINSTALL:
 sudo rmmod cdisk_mod.ko
 
 USAGE:

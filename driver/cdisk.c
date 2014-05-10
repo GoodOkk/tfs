@@ -50,6 +50,8 @@ struct cdisk_block {
 	atomic_t 		dirty;
 	struct mutex 		mutex;
 	spinlock_t		lock;
+	unsigned long		off;
+	unsigned long		idx;
 	struct list_head 	blocks_list;
 };
 
@@ -82,7 +84,7 @@ static struct cdisk_device *cdisk_alloc(void);
 static void cdisk_free(struct cdisk_device *device);
 
 
-static struct cdisk_block * cdisk_block_alloc(void)
+static struct cdisk_block * cdisk_block_alloc(unsigned long block_idx)
 {
 	struct cdisk_block *block = kzalloc(sizeof(struct cdisk_block), GFP_KERNEL);
 	if (!block)
@@ -93,6 +95,9 @@ static struct cdisk_block * cdisk_block_alloc(void)
 	mutex_init(&block->mutex);
 	spin_lock_init(&block->lock);
 	INIT_LIST_HEAD(&block->blocks_list);
+
+	block->idx = block_idx;
+	block->off = block_idx << CBLOCK_SHIFT;
 
 	block->size = CBLOCK_SIZE;
 	block->data = vmalloc(block->size);
@@ -211,7 +216,7 @@ static void *cdisk_alloc_sector(struct cdisk_device *device, sector_t sector)
 		struct cdisk_block *block = NULL;
 		block_idx = sector >> CBLOCK_SECTORS_SHIFT;
 		BUG_ON(block_idx >= device->blocks_count);
-		block = cdisk_block_alloc();
+		block = cdisk_block_alloc(block_idx);
 		if (!block)
 			return NULL;
 		spin_lock(&device->lock);
