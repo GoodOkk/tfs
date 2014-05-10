@@ -15,27 +15,33 @@ UNINSTALL
 sudo rmmod cdisk_mod.ko
 
 USAGE:
-sudo bin/cdisk_ctl --create "this creates /dev/cdisk1(2,3,4,...) devices one by one"
-sudo /sbin/mkfs -t ext4 /dev/cdisk1 "format device space to ext4 fs"
-sudo mkdir /mnt/mnt_point "create mount point"
-
-sudo mount -t ext4 /dev/cdisk1 /mnt/mnt_point "mount file system to dir"
-sudo cd /mnt/mnt_point && ... "work inside ext4 on our device"
-sudo umount /mnt/mnt_point    "umount file system"
-sudo bin/cdisk_ctl --destroy 1 "delete device"
+sudo bin/cdisk_ctl --create 
+  "this creates /dev/cdisk1(2,3,4,...) devices one by one"
+sudo /sbin/mkfs -t ext4 /dev/cdisk1 
+  "format device space to ext4 fs"
+sudo mkdir /mnt/mnt_point 
+  "create mount point"
+sudo mount -t ext4 /dev/cdisk1 /mnt/mnt_point 
+  "mount file system to dir"
+sudo cd /mnt/mnt_point && ... 
+  "work inside ext4 on our device"
+sudo umount /mnt/mnt_point
+  "umount file system"
+sudo bin/cdisk_ctl --destroy 1
+  "delete device"
 
 TESTS:
 sudo python  tests/disk_fmt.py (this test does the same in USAGE section)
 
 
 SOURCES STRUCTURE:
-bin\              -- folder for binaries
-  cdisk_mod.ko      --kernel module binary
-  cdisk_ctl         --ctl utility binary
+bin\  "folder for binaries"
+  cdisk_mod.ko "kernel module binary"
+  cdisk_ctl    "ctl utility binary"
 
-utils\            -- folder for ctl utilities
-  cdisk_ctl.c       -- ctl utility code
-  Makefile          -- ctl utility makefile
+utils\  "folder for ctl utilities"
+  cdisk_ctl.c "ctl utility code"
+  Makefile    "ctl utility makefile"
   
 driver\           -- folder for device driver
   include\          -- folder for external dev. driver headers
