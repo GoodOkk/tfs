@@ -14,6 +14,7 @@
 #include <linux/cdrom.h>
 #include <linux/workqueue.h>
 #include <linux/timer.h>
+#include <linux/cdev.h>
 
 #include <asm/uaccess.h>
 
@@ -48,7 +49,7 @@ MODULE_LICENSE("GPL");
 #define CDISK_NUMS 256
 
 #define CDISK_BLOCK_DEV_NAME	"cdisk"
-#define CDISK_CHAR_DEV_NAME 	"cdiskctl"
+#define CDISKCTL_CHAR_DEV_NAME 	"cdiskctl"
 
 #define CDISK_TIMER_TIMEOUT_MSECS 20000
 
@@ -98,7 +99,6 @@ static DEFINE_MUTEX(cdisk_devices_lock);
 static LIST_HEAD(cdisk_devices);
 
 static int cdisk_block_major = -1;
-static int cdisk_char_major = -1;
 
 static struct cdisk_block * cdisk_block_alloc(unsigned long block_idx)
 {
@@ -693,11 +693,73 @@ out:
 	return error;	
 }
 
-static struct file_operations cdisk_char_fops = {
+static struct file_operations cdiskctl_fops = {
+	.owner = THIS_MODULE,
 	.open = cdisk_char_open,
 	.release = cdisk_char_release,
 	.unlocked_ioctl = cdisk_char_ioctl
 };
+
+
+static struct class *cdiskctl_class;
+static dev_t cdiskctl_dev_t;
+static struct cdev cdiskctl_cdev;
+
+
+#define CDISKCTL_MAX_MINOR 1
+
+static int cdiskctl_create(void)
+{
+	int error = -EINVAL;
+	struct device *device = NULL;
+
+
+	cdiskctl_class = class_create(THIS_MODULE, CDISKCTL_CHAR_DEV_NAME);
+	if (IS_ERR(cdiskctl_class)) {
+		error = PTR_ERR(cdiskctl_class);
+		klog(KL_ERR, "class_create error=%d", error);
+		return error;
+	}
+	
+	error = alloc_chrdev_region(&cdiskctl_dev_t, 0, CDISKCTL_MAX_MINOR, CDISKCTL_CHAR_DEV_NAME);
+	if (error) {
+		klog(KL_ERR, "alloc_chrdev_region failed err=%d", error);
+		goto out_class_destroy;
+	}
+	cdev_init(&cdiskctl_cdev, &cdiskctl_fops);
+	cdiskctl_cdev.owner = THIS_MODULE;
+
+	error = cdev_add(&cdiskctl_cdev, cdiskctl_dev_t, CDISKCTL_MAX_MINOR);
+	if (error) {
+		klog(KL_ERR, "cdev_add failed with err=%d", error);
+		goto out_unreg_devreg;
+	}
+	
+	device = device_create(cdiskctl_class, NULL, MKDEV(MAJOR(cdiskctl_dev_t), 0), NULL, CDISKCTL_CHAR_DEV_NAME);
+	if (IS_ERR(device)) {
+		error = PTR_ERR(device);
+		klog(KL_ERR, "device_create err=%d", error);
+		goto out_cdev_del;
+	}
+	return 0;
+
+out_cdev_del:
+	cdev_del(&cdiskctl_cdev);
+out_unreg_devreg:
+	unregister_chrdev_region(cdiskctl_dev_t, CDISKCTL_MAX_MINOR);
+out_class_destroy:
+	class_destroy(cdiskctl_class);	
+	return error;
+
+}
+
+static void cdiskctl_release(void)
+{
+	device_destroy(cdiskctl_class, MKDEV(MAJOR(cdiskctl_dev_t), 0));
+	cdev_del(&cdiskctl_cdev);
+	unregister_chrdev_region(cdiskctl_dev_t, CDISKCTL_MAX_MINOR);
+	class_destroy(cdiskctl_class);
+}
 
 static int __init cdisk_init(void)
 {	
@@ -705,10 +767,9 @@ static int __init cdisk_init(void)
 
 	klog(KL_INFO, "init");
 	
-	cdisk_char_major = register_chrdev(0, CDISK_CHAR_DEV_NAME, &cdisk_char_fops);
-	if (cdisk_char_major < 0) {
-		klog(KL_ERR, "register_chrdev failed, result=%d", cdisk_char_major);
-		error = -ENOMEM;
+	error = cdiskctl_create();
+	if (error) {
+		klog(KL_ERR, "cdiskctl_create err=%d", error);
 		goto out;
 	}
 
@@ -716,7 +777,7 @@ static int __init cdisk_init(void)
 	if (cdisk_block_major < 0) {
 		klog(KL_ERR, "register_blkdev failed, result=%d", cdisk_block_major);
 		error = -ENOMEM;
-		goto out_unreg_char_dev;
+		goto out_cdiskctl_release;
 	}
 	
 	cdisk_wq = alloc_workqueue("cdisk-wq", WQ_MEM_RECLAIM|WQ_UNBOUND, 2);
@@ -732,15 +793,15 @@ static int __init cdisk_init(void)
 		klog(KL_ERR, "mod_timer failed with err=%d", error);
 		goto out_del_wq;
 	}	
-	klog(KL_INFO, "module loaded, block major=%d, char major=%d", cdisk_block_major, cdisk_char_major);
+	klog(KL_INFO, "module loaded, block major=%d", cdisk_block_major);
 	return 0;
 
 out_del_wq:
 	destroy_workqueue(cdisk_wq);
 out_unreg_block_dev:
 	unregister_blkdev(cdisk_block_major, CDISK_BLOCK_DEV_NAME);
-out_unreg_char_dev:
-	unregister_chrdev(cdisk_char_major, CDISK_CHAR_DEV_NAME);
+out_cdiskctl_release:
+	cdiskctl_release();
 out:
 	return error;
 }
@@ -761,7 +822,7 @@ static void __exit cdisk_exit(void)
 	mutex_unlock(&cdisk_devices_lock);
 
 	unregister_blkdev(cdisk_block_major, CDISK_BLOCK_DEV_NAME);
-	unregister_chrdev(cdisk_char_major, CDISK_CHAR_DEV_NAME);
+	cdiskctl_release();
 
 	klog(KL_INFO, "exited");
 }
