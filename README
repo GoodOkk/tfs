@@ -17,8 +17,8 @@ sudo rmmod cdisk_mod.ko
 
 USAGE:
 
-sudo bin/cdisk_ctl --create 
-  	"this creates /dev/cdisk1(2,3,4,...) devices one by one"
+sudo bin/cdisk_ctl --create DISK_NUM
+  	"this creates /dev/cdiskDISK_NUM device"
 
 sudo /sbin/mkfs -t ext4 /dev/cdisk1 
   	"format device space to ext4 fs"
@@ -35,8 +35,8 @@ sudo cd /mnt/mnt_point && ...
 sudo umount /mnt/mnt_point
  	"umount file system"
 
-sudo bin/cdisk_ctl --destroy 1
-  	"delete device"
+sudo bin/cdisk_ctl --destroy DISK_NUM
+  	"delete device /dev/cdiskDISK_NUM"
 
 TESTS:
 sudo python  tests/disk_fmt.py
@@ -65,5 +65,5 @@ tests\  "folder for tests"
   __init__.py 
   settings.py    "general settings container"
   cmd.py         "lib to execute shell cmd"
-  disk_fmt.py    "disk formating test"
+  test_fs_fmt.py    "disk formating to EXT4 like file system test"
 
