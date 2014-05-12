@@ -20,6 +20,8 @@
 #include "klog.h"
 #include <cdisk_cmd.h>
 
+MODULE_LICENSE("GPL");
+
 #define __SUBCOMPONENT__ "cdisk"
 
 #define SECTOR_SHIFT		9
@@ -43,6 +45,12 @@
 
 #define CDISK_FLAGS_CTL		(1 << 0)
 #define CDISK_FLAGS_DELETING	(1 << 1)
+#define CDISK_NUMS 256
+
+#define CDISK_BLOCK_DEV_NAME	"cdisk"
+#define CDISK_CHAR_DEV_NAME 	"cdiskctl"
+
+#define CDISK_TIMER_TIMEOUT_MSECS 20000
 
 struct cdisk_block {
 	void 			*data;
@@ -83,6 +91,14 @@ static void cdisk_del_one(struct cdisk_device *device);
 static struct cdisk_device *cdisk_alloc(void);
 static void cdisk_free(struct cdisk_device *device);
 
+static char cdisk_nums[CDISK_NUMS];
+static DEFINE_MUTEX(cdisk_nums_lock);
+
+static DEFINE_MUTEX(cdisk_devices_lock);
+static LIST_HEAD(cdisk_devices);
+
+static int cdisk_block_major = -1;
+static int cdisk_char_major = -1;
 
 static struct cdisk_block * cdisk_block_alloc(unsigned long block_idx)
 {
@@ -117,13 +133,6 @@ static void cdisk_block_free(struct cdisk_block *block)
 	kfree(block);
 }
 
-
-#define CDISK_NUMS 256
-
-static char cdisk_nums[CDISK_NUMS];
-
-static DEFINE_MUTEX(cdisk_nums_lock);
-
 static int cdisk_num_alloc(void)
 {
 	int i = 0;
@@ -150,16 +159,6 @@ static void cdisk_num_free(int num)
 	cdisk_nums[num] = 0;
 	mutex_unlock(&cdisk_nums_lock);	
 }
-
-/*
- * Look up and return a brd's page for a given sector.
- */
-static DEFINE_MUTEX(cdisk_devices_lock);
-
-static LIST_HEAD(cdisk_devices);
-
-static int cdisk_major = -1;
-#define CDISK_DEV_NAME "cdisk"
 
 static int cdisk_is_ctl(struct cdisk_device *device)
 {
@@ -582,7 +581,7 @@ static struct cdisk_device *cdisk_alloc(void)
 	if (!disk)
 		goto out_free_queue;
 
-	disk->major = cdisk_major;
+	disk->major = cdisk_block_major;
 	disk->first_minor = num;
 	disk->fops = &cdisk_fops;
 	disk->private_data = device;
@@ -670,8 +669,31 @@ static void cdisk_timer_callback(unsigned long data)
 			klog(KL_ERR, "cant queue work");
 		}
 	}
-	mod_timer(&cdisk_timer, jiffies + msecs_to_jiffies(20000));
+	mod_timer(&cdisk_timer, jiffies + msecs_to_jiffies(CDISK_TIMER_TIMEOUT_MSECS));
 }
+
+static int cdisk_char_open(struct inode *inode, struct file *file)
+{
+	try_module_get(THIS_MODULE);
+	return 0;
+}
+
+static int cdisk_char_release(struct inode *inode, struct file *file)
+{
+	module_put(THIS_MODULE);
+	return 0;
+}
+
+static long cdisk_char_ioctl(struct file *file, unsigned int cmd, unsigned long param)
+{
+	return 0;	
+}
+
+static struct file_operations cdisk_char_fops = {
+	.open = cdisk_char_open,
+	.release = cdisk_char_release,
+	.unlocked_ioctl = cdisk_char_ioctl
+};
 
 static int __init cdisk_init(void)
 {	
@@ -680,22 +702,29 @@ static int __init cdisk_init(void)
 
 	klog(KL_INFO, "init");
 	
-	cdisk_major = register_blkdev(0, CDISK_DEV_NAME);
-	if (cdisk_major < 0) {
-		klog(KL_ERR, "register_blkdev failed, result=%d", cdisk_major);
+	cdisk_char_major = register_chrdev(0, CDISK_CHAR_DEV_NAME, &cdisk_char_fops);
+	if (cdisk_char_major < 0) {
+		klog(KL_ERR, "register_chrdev failed, result=%d", cdisk_char_major);
 		error = -EIO;
 		goto out;
+	}
+
+	cdisk_block_major = register_blkdev(0, CDISK_BLOCK_DEV_NAME);
+	if (cdisk_block_major < 0) {
+		klog(KL_ERR, "register_blkdev failed, result=%d", cdisk_block_major);
+		error = -EIO;
+		goto out_unreg_char_dev;
 	}
 	
 	cdisk_wq = alloc_workqueue("cdisk-wq", WQ_MEM_RECLAIM|WQ_UNBOUND, 2);
 	if (!cdisk_wq) {
 		klog(KL_ERR, "cant create wq");
 		error = -ENOMEM;
-		goto out_unreg_dev;
+		goto out_unreg_block_dev;
 	}
 
 	setup_timer(&cdisk_timer, cdisk_timer_callback, 0);
-	error = mod_timer(&cdisk_timer, jiffies + msecs_to_jiffies(20000));
+	error = mod_timer(&cdisk_timer, jiffies + msecs_to_jiffies(CDISK_TIMER_TIMEOUT_MSECS));
 	if (error) {
 		klog(KL_ERR, "mod_timer failed with err=%d", error);
 		goto out_del_wq;
@@ -715,15 +744,17 @@ static int __init cdisk_init(void)
 	mutex_unlock(&cdisk_devices_lock);
 	add_disk(device->disk);
 
-	klog(KL_INFO, "module loaded, major=%d, device=%p", cdisk_major, device);
+	klog(KL_INFO, "module loaded, block major=%d, char major=%d, device=%p", cdisk_block_major, cdisk_char_major, device);
 	return 0;
 
 out_del_timer:
 	del_timer_sync(&cdisk_timer);
 out_del_wq:
 	destroy_workqueue(cdisk_wq);
-out_unreg_dev:
-	unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
+out_unreg_block_dev:
+	unregister_blkdev(cdisk_block_major, CDISK_BLOCK_DEV_NAME);
+out_unreg_char_dev:
+	unregister_chrdev(cdisk_char_major, CDISK_CHAR_DEV_NAME);
 out:
 	return error;
 }
@@ -753,13 +784,12 @@ static void __exit cdisk_exit(void)
 		cdisk_del_one(device);
 	mutex_unlock(&cdisk_devices_lock);
 
-	unregister_blkdev(cdisk_major, CDISK_DEV_NAME);
+	unregister_blkdev(cdisk_block_major, CDISK_BLOCK_DEV_NAME);
+	unregister_chrdev(cdisk_char_major, CDISK_CHAR_DEV_NAME);
 
 	klog(KL_INFO, "exited");
 }
 
 module_init(cdisk_init);
 module_exit(cdisk_exit);
-
-MODULE_LICENSE("GPL");
 
