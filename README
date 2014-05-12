@@ -38,6 +38,9 @@ sudo umount /mnt/mnt_point
 sudo bin/cdisk_ctl --destroy DISK_NUM
   	"delete device /dev/cdiskDISK_NUM"
 
+LOGGING:
+	dmesg or /var/log/klog.log (root access required)
+
 TESTS:
 sudo python  tests/disk_fmt.py
 	"this test does the same in USAGE section"
