@@ -88,7 +88,7 @@ static struct timer_list cdisk_timer;
 static int cdisk_num_alloc(void);
 static void cdisk_num_free(int num);
 static void cdisk_del_one(struct cdisk_device *device);
-static struct cdisk_device *cdisk_alloc(void);
+static struct cdisk_device *cdisk_alloc(int num);
 static void cdisk_free(struct cdisk_device *device);
 
 static char cdisk_nums[CDISK_NUMS];
@@ -131,6 +131,24 @@ static void cdisk_block_free(struct cdisk_block *block)
 	BUG_ON(!list_empty(&block->blocks_list));
 	vfree(block->data);
 	kfree(block);
+}
+
+static int cdisk_num_use(int num)
+{
+	int error = -EINVAL;
+	
+	if (num < 0 || num >= CDISK_NUMS)
+		return -EINVAL;
+
+	mutex_lock(&cdisk_nums_lock);
+	if (cdisk_nums[num] == 0) {
+		cdisk_nums[num] = 1;
+		error = 0;
+	} else {
+		error = -EBUSY;
+	}
+	mutex_unlock(&cdisk_nums_lock);
+	return error;
 }
 
 static int cdisk_num_alloc(void)
@@ -380,12 +398,12 @@ out:
 	bio_endio(bio, err);
 }
 
-static int cdisk_create(int *disk_num)
+static int cdisk_create(int num)
 {
 	struct cdisk_device *device = NULL;
 	int error = -EINVAL;
 
-	device = cdisk_alloc();
+	device = cdisk_alloc(num);
 	if (!device) {
 		error = -ENOMEM;
 		goto out;
@@ -405,7 +423,6 @@ static int cdisk_create(int *disk_num)
 	list_add_tail(&device->devices_list, &cdisk_devices);
 	mutex_unlock(&cdisk_devices_lock);
 	add_disk(device->disk);
-	*disk_num = device->number;
 	return 0;
 
 free_device:
@@ -442,13 +459,14 @@ static int cdisk_setup(int disk_num)
 	return error;
 }
 
-static int cdisk_ioctl_disk(struct cdisk_device *device, struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
+static int cdisk_disk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
 	int error = -EINVAL;
-	
+	struct cdisk_device *device = bdev->bd_disk->private_data;
+
 	switch (cmd) {
 		case BLKFLSBUF:
-			klog(KL_INFO, "device=%p,  BLKFLSBUF");
+			klog(KL_INFO, "device=%p,  BLKFLSBUF", device);
 			error = 0;
 			break;
 		case CDROM_GET_CAPABILITY:
@@ -456,101 +474,40 @@ static int cdisk_ioctl_disk(struct cdisk_device *device, struct block_device *bd
 			break;
 		default:
 			error = -EINVAL;
-			klog(KL_ERR, "%d not implemented yet", cmd);
+			klog(KL_ERR, "%d not implemented yet, device=%p", cmd, device);
 	}
 
 	return error;
 }
-
-static int cdisk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
-{
-	int error = -EINVAL;
-	struct cdisk_device *device = bdev->bd_disk->private_data;
-	struct cdisk_params *params = NULL;	
-
-	//klog(KL_INFO, "device=%p, cmd=%u, arg=%p", device, cmd, arg);
-	
-	if (!cdisk_is_ctl(device)) {
-		return cdisk_ioctl_disk(device, bdev, mode, cmd, arg);
-	}
-
-	params = kmalloc(sizeof(struct cdisk_params), GFP_KERNEL);
-	if (!params) {
-		error = -ENOMEM;
-		goto out;
-	}
-
-	if (copy_from_user(params, (const void *)arg, sizeof(struct cdisk_params))) {
-		error = -EFAULT;
-		goto out_free_params;
-	}
-	
-	error = 0;
-	switch (cmd) {
-		case IOCTL_HELLO:
-			klog(KL_INFO, "hello from user mode");
-			params->error = 0;
-			break;
-		case IOCTL_DISK_CREATE:
-			params->error = cdisk_create(&params->u.create.disk_num);	
-			break;
-		case IOCTL_DISK_DELETE:
-			params->error = cdisk_delete(params->u.delete.disk_num);
-			break;
-		case IOCTL_DISK_SETUP:
-			params->error = cdisk_setup(params->u.delete.disk_num);
-			break;
-		default:
-			klog(KL_ERR, "unknown ioctl=%d", cmd);
-			error = -EINVAL;
-			break;
-	}
-	
-
-	if (copy_to_user((void *)arg, params, sizeof(struct cdisk_params))) {
-		error = -EFAULT;
-		goto out_free_params;
-	}
-
-out_free_params:
-	kfree(params);
-out:
-	return error;
-}
-
-/*
-static int cdisk_direct_access(struct block_device *bdev, sector_t sector,
-	void **kaddr, unsigned long *pfn)
-{
-	struct cdisk_device *device = bdev->bd_disk->private_data;
-	int error = -EINVAL;
-	if (cdisk_is_ctl(device)) {
-		klog(KL_INFO, "device=%p is ctl device, so ignore I/O", device);
-		error = -EIO;		
-		goto out;
-	}
-
-	klog(KL_INFO, "device=%p", device);
-out:	
-	return error;
-}
-*/
 
 static const struct block_device_operations cdisk_fops = {
 	.owner = THIS_MODULE,
-	.ioctl = cdisk_ioctl,
-//	.direct_access = cdisk_direct_access,
+	.ioctl = cdisk_disk_ioctl,
 };
 
-static struct cdisk_device *cdisk_alloc(void)
+static void cdisk_del_one(struct cdisk_device *device)
+{
+	klog(KL_INFO, "deleting disk %p, num %d\n", device, device->number);
+
+	list_del(&device->devices_list);
+	del_gendisk(device->disk);
+	cdisk_free(device);
+	klog(KL_INFO, "deleted disk %p\n", device);
+}
+
+static struct cdisk_device *cdisk_alloc(int num)
 {
 	struct cdisk_device *device = NULL;
 	struct gendisk *disk = NULL;
-	int num = -1;
-
-	num = cdisk_num_alloc();
-	if (num == -1) 
-		goto out;
+	
+	if (num == -1) {
+		num = cdisk_num_alloc();
+		if (num == -1) 
+			goto out;
+	} else {
+		if (cdisk_num_use(num))
+			goto out;
+	}
 
 	device = kzalloc(sizeof(*device), GFP_KERNEL);
 	if (!device)
@@ -674,19 +631,66 @@ static void cdisk_timer_callback(unsigned long data)
 
 static int cdisk_char_open(struct inode *inode, struct file *file)
 {
-	try_module_get(THIS_MODULE);
+	klog(KL_INFO, "in open");
+	if (!try_module_get(THIS_MODULE)) {
+		klog(KL_ERR, "cant ref module");
+		return -EINVAL;
+	}
+	klog(KL_INFO, "opened");
 	return 0;
 }
 
 static int cdisk_char_release(struct inode *inode, struct file *file)
 {
+	klog(KL_INFO, "in release");
 	module_put(THIS_MODULE);
+	klog(KL_INFO, "released");
 	return 0;
 }
 
-static long cdisk_char_ioctl(struct file *file, unsigned int cmd, unsigned long param)
+static long cdisk_char_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	return 0;	
+	int error = -EINVAL;
+	struct cdisk_ctl_params *params = NULL;	
+
+	params = kmalloc(sizeof(struct cdisk_ctl_params), GFP_KERNEL);
+	if (!params) {
+		error = -ENOMEM;
+		goto out;
+	}
+
+	if (copy_from_user(params, (const void *)arg, sizeof(struct cdisk_ctl_params))) {
+		error = -EFAULT;
+		goto out_free_params;
+	}
+	
+	error = 0;
+	switch (cmd) {
+		case IOCTL_DISK_CREATE:
+			params->error = cdisk_create(params->u.create.disk_num);	
+			break;
+		case IOCTL_DISK_DELETE:
+			params->error = cdisk_delete(params->u.delete.disk_num);
+			break;
+		case IOCTL_DISK_SETUP:
+			params->error = cdisk_setup(params->u.delete.disk_num);
+			break;
+		default:
+			klog(KL_ERR, "unknown ioctl=%d", cmd);
+			error = -EINVAL;
+			break;
+	}
+	
+	if (copy_to_user((void *)arg, params, sizeof(struct cdisk_ctl_params))) {
+		error = -EFAULT;
+		goto out_free_params;
+	}
+	
+	return 0;
+out_free_params:
+	kfree(params);
+out:
+	return error;	
 }
 
 static struct file_operations cdisk_char_fops = {
@@ -697,7 +701,6 @@ static struct file_operations cdisk_char_fops = {
 
 static int __init cdisk_init(void)
 {	
-	struct cdisk_device *device = NULL;
 	int error = -EINVAL;
 
 	klog(KL_INFO, "init");
@@ -705,14 +708,14 @@ static int __init cdisk_init(void)
 	cdisk_char_major = register_chrdev(0, CDISK_CHAR_DEV_NAME, &cdisk_char_fops);
 	if (cdisk_char_major < 0) {
 		klog(KL_ERR, "register_chrdev failed, result=%d", cdisk_char_major);
-		error = -EIO;
+		error = -ENOMEM;
 		goto out;
 	}
 
 	cdisk_block_major = register_blkdev(0, CDISK_BLOCK_DEV_NAME);
 	if (cdisk_block_major < 0) {
 		klog(KL_ERR, "register_blkdev failed, result=%d", cdisk_block_major);
-		error = -EIO;
+		error = -ENOMEM;
 		goto out_unreg_char_dev;
 	}
 	
@@ -729,26 +732,9 @@ static int __init cdisk_init(void)
 		klog(KL_ERR, "mod_timer failed with err=%d", error);
 		goto out_del_wq;
 	}	
-
-	device = cdisk_alloc();
-	if (!device) {
-		klog(KL_ERR, "cant alloc disk");
-		error = -ENOMEM;
-		goto out_del_timer;
-	}
-
-	device->flags|= CDISK_FLAGS_CTL; //mark device as ctl device
-	
-	mutex_lock(&cdisk_devices_lock);
-	list_add_tail(&device->devices_list, &cdisk_devices);
-	mutex_unlock(&cdisk_devices_lock);
-	add_disk(device->disk);
-
-	klog(KL_INFO, "module loaded, block major=%d, char major=%d, device=%p", cdisk_block_major, cdisk_char_major, device);
+	klog(KL_INFO, "module loaded, block major=%d, char major=%d", cdisk_block_major, cdisk_char_major);
 	return 0;
 
-out_del_timer:
-	del_timer_sync(&cdisk_timer);
 out_del_wq:
 	destroy_workqueue(cdisk_wq);
 out_unreg_block_dev:
@@ -757,16 +743,6 @@ out_unreg_char_dev:
 	unregister_chrdev(cdisk_char_major, CDISK_CHAR_DEV_NAME);
 out:
 	return error;
-}
-
-static void cdisk_del_one(struct cdisk_device *device)
-{
-	klog(KL_INFO, "deleting disk %p, num %d\n", device, device->number);
-
-	list_del(&device->devices_list);
-	del_gendisk(device->disk);
-	cdisk_free(device);
-	klog(KL_INFO, "deleted disk %p\n", device);
 }
 
 static void __exit cdisk_exit(void)

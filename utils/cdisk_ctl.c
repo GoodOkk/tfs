@@ -11,7 +11,6 @@
 
 #include <cdisk_cmd.h>
 
-
 static void usage(void)
 {
     	printf("Usage:\ncdisk_ctl --create\ncdisk_ctl --delete DISK_NUM\n");
@@ -22,7 +21,7 @@ static int cdisk_ctl_open(int *fd)
 	int dev_fd = -1;
 	int error = -EINVAL;
 
-	dev_fd = open("/dev/cdisk0", 0);
+	dev_fd = open("/dev/cdiskctl", 0);
 	if (dev_fd == -1) {
 		error = errno;
 		printf("cant open ctl disk device, error=%d\n", error);
@@ -32,18 +31,19 @@ static int cdisk_ctl_open(int *fd)
 	return 0;
 }
 
-static int cdisk_create(int *disk_num)
+static int cdisk_create(int disk_num)
 {
 	int error = -EINVAL;
 	int fd = -1;
-	struct cdisk_params params;
+	struct cdisk_ctl_params params;
 
 	error = cdisk_ctl_open(&fd);
 	if (error)
 		return error;
 	
-	memset(&params, 0, sizeof(struct cdisk_params));
+	memset(&params, 0, sizeof(struct cdisk_ctl_params));
 
+	params.u.create.disk_num = disk_num;
 	error = ioctl(fd, IOCTL_DISK_CREATE, &params);
 	if (error)
 		goto out;
@@ -52,7 +52,6 @@ static int cdisk_create(int *disk_num)
 	if (error)
 		goto out;
 
-	*disk_num = params.u.create.disk_num;
 out:
 	close(fd);
 	return error;
@@ -62,13 +61,13 @@ static int cdisk_delete(int disk_num)
 {
 	int error = -EINVAL;
 	int fd = -1;
-	struct cdisk_params params;
+	struct cdisk_ctl_params params;
 
 	error = cdisk_ctl_open(&fd);
 	if (error)
 		return error;
 	
-	memset(&params, 0, sizeof(struct cdisk_params));
+	memset(&params, 0, sizeof(struct cdisk_ctl_params));
 	params.u.delete.disk_num = disk_num;
 
 	error = ioctl(fd, IOCTL_DISK_DELETE, &params);
@@ -100,7 +99,14 @@ int main(int argc, char *argv[])
     
     	if (strncmp(argv[1], CREATE_OPT, strlen(CREATE_OPT) + 1) == 0) {
 		int disk_num = -1;
-		error = cdisk_create(&disk_num);
+		if (argc != 3) {
+			usage();
+			error = -EINVAL;
+			goto out;
+		}
+		disk_num = strtol(argv[2], NULL, 10);
+		printf("disk num for creation is %d\n", disk_num);
+		error = cdisk_create(disk_num);
 		if (!error)
 			printf("created disk with num=%d\n", disk_num);
 		goto out;
