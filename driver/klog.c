@@ -126,6 +126,7 @@ static void klog_msg_write(struct klog_msg *msg)
 	loff_t pos = 0;
 	int wrote;
 	int size;
+	int error;
 
 	file = filp_open(KLOG_PATH, O_APPEND|O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR);
 	if (!file) {
@@ -137,6 +138,9 @@ static void klog_msg_write(struct klog_msg *msg)
 	if (wrote != size) {
 		printk(KERN_ERR "klog : vfs_write result=%d, should be %d", wrote, size);
 	}
+	error = vfs_fsync(file, 0);
+	if (error < 0)
+		printk(KERN_ERR "klog : vfs_fsync err=%d", error);
 
 	filp_close(file, NULL);	
 }
@@ -162,6 +166,9 @@ static void klog_msg_queue_process(void)
 	} 
 }
 
+static char *klog_level_s[] = {"INV", "INF", "ERR" , "DBG" , "WRN", "MAX"};
+
+
 void klog(int level, const char *subcomp, const char *file, int line, const char *func, const char *fmt, ...)
 {
 	
@@ -170,6 +177,18 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
     	int left, count, len;
     	va_list args;
     	struct timespec ts;
+	char *level_s;
+
+	if (level <= KL_INV_L || level >= KL_MAX_L) {
+		printk(KERN_ERR "klog : invalid level=%d", level);
+		return;
+	}	
+
+	if (level < 0 || level >= sizeof(klog_level_s)/sizeof(klog_level_s[0])) {
+		printk(KERN_ERR "klog : invalid level=%d", level);
+		return;
+	}
+	level_s = klog_level_s[level];
 	
 	if (klog_stopping) {
 		printk(KERN_ERR "klog : stopping");
@@ -188,7 +207,8 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
 
     	getnstimeofday(&ts);
 
-    	klog_write_msg(&pos,&left,"%s:[%lld.%.9ld][%d]:%s:%d:%s(), ", subcomp, (long long)ts.tv_sec, ts.tv_nsec, current->pid, truncate_file_path(file), line, func);
+    	klog_write_msg(&pos,&left,"%s:%s:[%lld.%.9ld][%d]:%s:%d:%s(), ", level_s, subcomp, (long long)ts.tv_sec, ts.tv_nsec, current->pid, 
+		truncate_file_path(file), line, func);
 
     	va_start(args,fmt);
     	klog_write_msg2(&pos,&left,fmt,args);
