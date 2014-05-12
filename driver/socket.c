@@ -7,10 +7,10 @@
 #include <linux/delay.h>
 #include <net/sock.h>
 
-#include "sockets.h"
+#include "socket.h"
 #include "klog.h"
 
-#define __SUBCOMPONENT__ "sockets"
+#define __SUBCOMPONENT__ "socket"
 
 int csock_create(struct socket **sockp,
 	__u32 local_ip, int local_port)

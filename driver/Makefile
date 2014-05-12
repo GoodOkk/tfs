@@ -1,7 +1,7 @@
 obj-m += cdisk_mod.o
 ccflags-y := -I$(src)/include -I$(src)/inc
 
-cdisk_mod-y := cdisk.o klog.o sockets.o
+cdisk_mod-y := cdisk.o klog.o socket.o
 
 KVERSION = $(shell uname -r)
 
