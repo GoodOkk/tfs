@@ -103,19 +103,19 @@ static void klog_msg_printk(struct klog_msg *msg)
 {
 	switch (msg->level) {
 		case KL_INFO_L: 
-    			printk(KERN_INFO "%s\n", msg->data);
+    			printk(KERN_INFO "%s", msg->data);
 			break;
 		case KL_ERR_L:
-    			printk(KERN_ERR "%s\n", msg->data);
+    			printk(KERN_ERR "%s", msg->data);
 			break;
 		case KL_WARN_L:
-    			printk(KERN_WARNING "%s\n", msg->data);
+    			printk(KERN_WARNING "%s", msg->data);
 			break;
 		case KL_DEBUG_L:
-    			printk(KERN_DEBUG "%s\n", msg->data);
+    			printk(KERN_DEBUG "%s", msg->data);
 			break;
 		default:	
-	    		printk(KERN_INFO "%s\n", msg->data);
+	    		printk(KERN_INFO "%s", msg->data);
 			break;
 	}
 }
@@ -167,7 +167,7 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
 	
     	struct klog_msg *msg = NULL;
     	char *pos;
-    	int left, count;
+    	int left, count, len;
     	va_list args;
     	struct timespec ts;
 	
@@ -193,8 +193,18 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
     	va_start(args,fmt);
     	klog_write_msg2(&pos,&left,fmt,args);
     	va_end(args);
-
+	
     	msg->data[count-1] = '\0';
+
+	len = strlen(msg->data);
+	if (len == (count -1)) {
+		msg->data[len-1] = '\n';
+		msg->data[len] = '\n';
+	} else {
+		msg->data[len] = '\n';
+		msg->data[len+1] = '\0';
+	}
+
 	klog_msg_printk(msg);
 	klog_msg_queue(msg);	
 }

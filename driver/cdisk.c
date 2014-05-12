@@ -418,7 +418,7 @@ static int cdisk_create(int num)
 	}
 	memset(device->blocks, 0, device->blocks_count*sizeof(struct cdisk_block *));
 
-	klog(KL_INFO, "created device=%p, num=%d\n", device, device->number);
+	klog(KL_INFO, "created device=%p, num=%d", device, device->number);
 
 	mutex_lock(&cdisk_devices_lock);
 	list_add_tail(&device->devices_list, &cdisk_devices);
@@ -437,7 +437,7 @@ static int cdisk_delete(int disk_num)
 	int error = -EINVAL;
 	struct cdisk_device *device = NULL;
 
-	klog(KL_INFO, "disk_num=%d\n", disk_num);
+	klog(KL_INFO, "disk_num=%d", disk_num);
 	
 	mutex_lock(&cdisk_devices_lock);
 	list_for_each_entry(device, &cdisk_devices, devices_list) {
@@ -488,12 +488,12 @@ static const struct block_device_operations cdisk_fops = {
 
 static void cdisk_del_one(struct cdisk_device *device)
 {
-	klog(KL_INFO, "deleting disk %p, num %d\n", device, device->number);
+	klog(KL_INFO, "deleting disk %p, num %d", device, device->number);
 
 	list_del(&device->devices_list);
 	del_gendisk(device->disk);
 	cdisk_free(device);
-	klog(KL_INFO, "deleted disk %p\n", device);
+	klog(KL_INFO, "deleted disk %p", device);
 }
 
 static struct cdisk_device *cdisk_alloc(int num)
