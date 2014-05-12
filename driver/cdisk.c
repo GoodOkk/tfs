@@ -403,6 +403,7 @@ static int cdisk_create(int num)
 	struct cdisk_device *device = NULL;
 	int error = -EINVAL;
 
+	
 	device = cdisk_alloc(num);
 	if (!device) {
 		error = -ENOMEM;
@@ -764,13 +765,20 @@ static void cdiskctl_release(void)
 static int __init cdisk_init(void)
 {	
 	int error = -EINVAL;
+	
+	error = klog_init();
+	if (error) {
+		printk(KERN_ERR "klog_init failed with err=%d", error);
+		goto out;
+	}
+
 
 	klog(KL_INFO, "init");
 	
 	error = cdiskctl_create();
 	if (error) {
 		klog(KL_ERR, "cdiskctl_create err=%d", error);
-		goto out;
+		goto out_log_release;
 	}
 
 	cdisk_block_major = register_blkdev(0, CDISK_BLOCK_DEV_NAME);
@@ -802,6 +810,8 @@ out_unreg_block_dev:
 	unregister_blkdev(cdisk_block_major, CDISK_BLOCK_DEV_NAME);
 out_cdiskctl_release:
 	cdiskctl_release();
+out_log_release:
+	klog_release();
 out:
 	return error;
 }
@@ -825,6 +835,7 @@ static void __exit cdisk_exit(void)
 	cdiskctl_release();
 
 	klog(KL_INFO, "exited");
+	klog_release();
 }
 
 module_init(cdisk_init);

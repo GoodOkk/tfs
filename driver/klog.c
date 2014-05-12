@@ -2,10 +2,36 @@
 #include <linux/kernel.h>       /* Needed for KERN_INFO */
 #include <linux/sched.h>
 #include <linux/time.h>
-#include <linux/sched.h>
+#include <linux/list.h>
+#include <linux/kthread.h>
+#include <linux/slab.h>
+#include <linux/mempool.h>
+#include <linux/wait.h>
+#include <linux/spinlock.h>
+#include <linux/types.h>
+#include <linux/fs.h>
+
 #include <stdarg.h>
 
-#define KLOG_MSG_BYTES 200
+#define KLOG_MSG_BYTES	200
+#define KLOG_PATH "/var/log/klog.log"
+
+struct klog_msg {
+	struct list_head 	msg_list;
+	int			level;
+	char 			data[KLOG_MSG_BYTES];
+};
+
+static LIST_HEAD(klog_msg_list);
+static DEFINE_SPINLOCK(klog_msg_lock);
+
+static struct kmem_cache *klog_msg_cache;
+static mempool_t *klog_msg_pool;
+
+static long klog_stopping = 0;
+
+static struct task_struct *klog_thread;
+static DECLARE_WAIT_QUEUE_HEAD(klog_thread_wait);
 
 static int klog_write_msg2(char **buff, int *left, const char *fmt, va_list args)
 {
@@ -44,14 +70,121 @@ static char * truncate_file_path(const char *filename)
     	return curr;
 }
 
+struct klog_msg * klog_msg_alloc(void)
+{
+	return mempool_alloc(klog_msg_pool, GFP_ATOMIC);
+}
+
+static void klog_msg_free(struct klog_msg *msg)
+{
+	mempool_free(msg, klog_msg_pool);
+}
+
+static void klog_msg_queue(struct klog_msg *msg)
+{
+	unsigned long flags;
+	int queued = 0;
+	
+	if (klog_stopping)
+		return;
+
+	spin_lock_irqsave(&klog_msg_lock, flags);
+	if (!klog_stopping) {
+		list_add_tail(&msg->msg_list, &klog_msg_list);
+		queued = 1;
+	}
+	spin_unlock_irqrestore(&klog_msg_lock, flags);
+
+	if (queued)
+		wake_up_interruptible(&klog_thread_wait);
+}
+
+static void klog_msg_printk(struct klog_msg *msg)
+{
+	switch (msg->level) {
+		case KL_INFO_L: 
+    			printk(KERN_INFO "%s\n", msg->data);
+			break;
+		case KL_ERR_L:
+    			printk(KERN_ERR "%s\n", msg->data);
+			break;
+		case KL_WARN_L:
+    			printk(KERN_WARNING "%s\n", msg->data);
+			break;
+		case KL_DEBUG_L:
+    			printk(KERN_DEBUG "%s\n", msg->data);
+			break;
+		default:	
+	    		printk(KERN_INFO "%s\n", msg->data);
+			break;
+	}
+}
+
+static void klog_msg_write(struct klog_msg *msg)
+{
+	struct file * file = NULL;
+	loff_t pos = 0;
+	int wrote;
+	int size;
+
+	file = filp_open(KLOG_PATH, O_APPEND|O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR);
+	if (!file) {
+		printk(KERN_ERR "klog : cant open log file");
+		return;	
+	}
+	size = strlen(msg->data);	
+	wrote = vfs_write(file, msg->data, size, &pos);
+	if (wrote != size) {
+		printk(KERN_ERR "klog : vfs_write result=%d, should be %d", wrote, size);
+	}
+
+	filp_close(file, NULL);	
+}
+
+static void klog_msg_queue_process(void)
+{
+	struct klog_msg *msg = NULL;
+
+	for (;;) {
+		if (list_empty(&klog_msg_list))
+			break;
+		msg = NULL;
+		spin_lock(&klog_msg_lock);
+		if (!list_empty(&klog_msg_list)) {
+			msg = list_first_entry(&klog_msg_list, struct klog_msg, msg_list);
+			list_del(&msg->msg_list);		
+		}
+		spin_unlock(&klog_msg_lock);
+		if (msg) {
+			klog_msg_write(msg);
+			klog_msg_free(msg);
+		}
+	} 
+}
 
 void klog(int level, const char *subcomp, const char *file, int line, const char *func, const char *fmt, ...)
 {
-    	char msg[KLOG_MSG_BYTES];
-    	char *pos = msg;
-    	int left = KLOG_MSG_BYTES - 1;
+	
+    	struct klog_msg *msg = NULL;
+    	char *pos;
+    	int left, count;
     	va_list args;
     	struct timespec ts;
+	
+	if (klog_stopping) {
+		printk(KERN_ERR "klog : stopping");
+		return;
+	}
+
+	msg = klog_msg_alloc();
+	if (!msg) {
+		printk(KERN_ERR "klog: cant alloc msg");
+		return;
+	}
+	
+	pos = msg->data;
+	count = sizeof(msg->data)/sizeof(char);
+	left = count - 1;
 
     	getnstimeofday(&ts);
 
@@ -61,24 +194,61 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
     	klog_write_msg2(&pos,&left,fmt,args);
     	va_end(args);
 
-    	msg[KLOG_MSG_BYTES-1] = '\0';
+    	msg->data[count-1] = '\0';
+	klog_msg_printk(msg);
+	klog_msg_queue(msg);	
+}
 
-	switch (level) {
-		case KL_INFO_L: 
-    			printk(KERN_INFO "%s\n", msg);
-			break;
-		case KL_ERR_L:
-    			printk(KERN_ERR "%s\n", msg);
-			break;
-		case KL_WARN_L:
-    			printk(KERN_WARNING "%s\n", msg);
-			break;
-		case KL_DEBUG_L:
-    			printk(KERN_DEBUG "%s\n", msg);
-			break;
-		default:	
-	    		printk(KERN_INFO "%s\n", msg);
-			break;
+static int klog_thread_routine(void *data)
+{
+	while (!kthread_should_stop()) {
+		wait_event_interruptible_timeout(klog_thread_wait, kthread_should_stop(), msecs_to_jiffies(100));
+		klog_msg_queue_process();	
 	}
+	
+	return 0;
+}
+
+int klog_init(void)
+{
+	int error = -EINVAL;
+
+	klog_msg_cache = kmem_cache_create("klog_msg_cache", sizeof(struct klog_msg), 0, SLAB_HWCACHE_ALIGN, NULL);
+	if (klog_msg_cache == NULL) {
+		printk(KERN_ERR "klog: cant create mem_cache");
+		error = -ENOMEM;
+		goto out;
+	}
+	klog_msg_pool = mempool_create_slab_pool(1024, klog_msg_cache);
+	if (klog_msg_pool == NULL) {
+		printk(KERN_ERR "klog: cant create mempool");
+		error = -ENOMEM;
+		goto out_cache_del;
+	}
+	
+	klog_thread = kthread_create(klog_thread_routine, NULL, "klogger");
+	if (IS_ERR(klog_thread)) {
+		error = PTR_ERR(klog_thread);
+		printk(KERN_ERR "klog: cant create thread");
+		goto out_pool_del;
+	}
+	wake_up_process(klog_thread);
+
+	return 0;
+out_pool_del:
+	mempool_destroy(klog_msg_pool);
+out_cache_del:
+	kmem_cache_destroy(klog_msg_cache);	
+out:
+
+	return error;
+}
+
+void klog_release(void)
+{
+	klog_stopping = 1;	
+	kthread_stop(klog_thread);
+	mempool_destroy(klog_msg_pool);
+	kmem_cache_destroy(klog_msg_cache);
 }
 

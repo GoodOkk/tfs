@@ -13,6 +13,10 @@
 
 void klog(int level, const char *subcomp, const char *file, int line, const char *func, const char *fmt, ...);
 
+int klog_init(void);
+
+void klog_release(void);
+
 #define ENTER_FUNC \
   klog(KL_INFO, "Enter %s", __FUNCTION__);
 
