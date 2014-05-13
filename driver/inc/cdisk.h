@@ -1,4 +1,4 @@
 #pragma once
 
-#define __LOGNAME__ "cdisk.log"
+#define __LOGNAME__ "cdisk_cli.log"
 

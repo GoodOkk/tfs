@@ -8,7 +8,7 @@ PROJ_DIR = os.path.dirname(CURR_DIR)
 
 BIN_DIR = os.path.join(PROJ_DIR, "bin")
 
-CDISK_MOD = 'cdisk_mod'
+CDISK_MOD = 'cdisk_cli'
 CDISK_MOD_KO = CDISK_MOD + '.ko'
 CDISK_CTL = 'cdisk_ctl'
 

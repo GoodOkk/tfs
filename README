@@ -12,14 +12,18 @@ BUILD CLEAN:
 make clean
 
 INSTALL:
-
-sudo insmod bin/cdisk_mod.ko
+	client-side:
+		sudo insmod bin/cdisk_cli.ko
+	server-side:
+		sudo insmod bin/cdisk_srv.ko
 
 UNINSTALL:
+	client-side:
+		sudo rmmod cdisk_cli.ko
+	server-side:
+		sudo rmmod cdisk_srv.ko
 
-sudo rmmod cdisk_mod.ko
-
-USAGE:
+USAGE (client-side):
 
 sudo bin/cdisk_ctl --create DISK_NUM
   	"this creates /dev/cdiskDISK_NUM device"
@@ -45,17 +49,21 @@ sudo bin/cdisk_ctl --destroy DISK_NUM
 LOGGING:
 	dmesg 
 		or 
-	/var/log/cdisk.log (root access required)
+	client-side
+		/var/log/cdisk_cli.log (root access required)
+	server-side
+		/var/log/cdisk_srv.log (root access required)
 
 TESTS:
 
-sudo python  tests/disk_fmt.py
+sudo python  tests/test_fs_fmt.py
 	"this test does the same in USAGE section"
 
 SOURCES STRUCTURE:
 
 bin\  	"folder for binaries"
-	cdisk_mod.ko 	"kernel module binary"
+	cdisk_cli.ko 	"client kernel module binary"
+	cdisk_srv.ko	"server kernel module binary"
   	cdisk_ctl    	"ctl utility binary"
 
 utils\  	"folder for ctl utilities"
@@ -66,13 +74,20 @@ driver\		"folder for device driver"
   	include\ 		"folder for external dev. driver headers"
    		cdisk_cmd.h	"header for dev. driver public ioctls"
 	inc\			"folder for private headers"
-		cdisk.h		"cdisk general header"
-  	klog.h		"kernel logging, wrapper over printk"  
-  	klog.c        	"kernel logging, wrapper over printk"
-  	cdisk.c       	"block(disk) device driver"
-  	sockets.c     	"kernel sockets lib"
-  	sockets.h     	"kernel sockets lib"
-  	Makefile      	"kernel module makefile"
+		cdisk.h		"cdisk client general header"
+		cserver.h	"server general header"
+		klog.h
+		socket.h
+		
+ 	lib\
+  		klog.c        	"kernel logging, wrapper over printk"
+  	 	sockets.c     	"kernel sockets lib"
+  	client\
+		cdisk.c       	"client block(disk) device driver"
+  	server\
+		cserver.c	"server driver"
+
+  	Makefile      	"kernel modules makefile"
   
 tests\  "folder for tests"
 	__init__.py 
