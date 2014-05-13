@@ -177,8 +177,9 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
     	int left, count, len;
     	va_list args;
     	struct timespec ts;
+	struct tm tm;
 	char *level_s;
-
+	
 	if (level <= KL_INV_L || level >= KL_MAX_L) {
 		printk(KERN_ERR "klog : invalid level=%d", level);
 		return;
@@ -206,9 +207,10 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
 	left = count - 1;
 
     	getnstimeofday(&ts);
+	time_to_tm(ts.tv_sec, 0, &tm);
 
-    	klog_write_msg(&pos,&left,"%s:%s:[%lld.%.9ld][%d]:%s:%d:%s(), ", level_s, subcomp, (long long)ts.tv_sec, ts.tv_nsec, current->pid, 
-		truncate_file_path(file), line, func);
+    	klog_write_msg(&pos,&left,"%04d-%02d-%02d %02d:%02d:%02d.%.9ld - %s - %s - %d - %s %d %s() - ", 1900+tm.tm_year, tm.tm_mon+1, tm.tm_mday, 
+			tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec, level_s, subcomp, current->pid, truncate_file_path(file), line, func);
 
     	va_start(args,fmt);
     	klog_write_msg2(&pos,&left,fmt,args);
@@ -219,7 +221,7 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
 	len = strlen(msg->data);
 	if (len == (count -1)) {
 		msg->data[len-1] = '\n';
-		msg->data[len] = '\n';
+		msg->data[len] = '\0';
 	} else {
 		msg->data[len] = '\n';
 		msg->data[len+1] = '\0';
@@ -232,10 +234,11 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
 static int klog_thread_routine(void *data)
 {
 	while (!kthread_should_stop()) {
-		wait_event_interruptible_timeout(klog_thread_wait, kthread_should_stop(), msecs_to_jiffies(100));
+		wait_event_interruptible_timeout(klog_thread_wait, (!list_empty(&klog_msg_list)) || kthread_should_stop(), msecs_to_jiffies(100));
 		klog_msg_queue_process();	
 	}
-	
+
+	klog_msg_queue_process();	
 	return 0;
 }
 
