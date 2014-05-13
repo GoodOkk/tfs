@@ -22,15 +22,20 @@ int csock_create(struct socket **sockp,
 	struct socket		*sock = NULL;
 	int 			error;
 	int 			option;
+	mm_segment_t		oldmm = get_fs();
 	
 	error = sock_create(PF_INET, SOCK_STREAM, 0, &sock);
 	if (error) {
 		klog(KL_ERR, "sock_create err=%d", error);
 		goto out;	
 	}
+
+	set_fs(KERNEL_DS);
 	option = 1;
 	error = sock_setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
 		(char *)&option, sizeof(option));
+	set_fs(oldmm);
+
 	if (error) {
 		klog(KL_ERR, "sock_setsockopt err=%d", error);
 		goto out_sock_release;
@@ -65,9 +70,13 @@ int csock_set_sendbufsize(struct socket *sock, int size)
 {
 	int option = size;
 	int error;
-
+	mm_segment_t oldmm = get_fs();
+	
+	set_fs(KERNEL_DS);
 	error = sock_setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
 		(char *)&option, sizeof(option));
+	set_fs(oldmm);
+
 	if (error) {
 		klog(KL_ERR, "cant set send buf size=%d for sock=%p",
 			size, sock);
@@ -80,9 +89,13 @@ int csock_set_rcvbufsize(struct socket *sock, int size)
 {
 	int option = size;
 	int error;
+	mm_segment_t oldmm = get_fs();
 
+	set_fs(KERNEL_DS);
 	error = sock_setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
 		(char *)&option, sizeof(option));
+	set_fs(oldmm);
+
 	if (error) {
 		klog(KL_ERR, "cant set rcv buf size=%d for sock=%p",
 			size, sock);
@@ -136,6 +149,7 @@ int csock_write_timeout(struct socket *sock, void *buffer, int nob, int timeout,
 	unsigned long then;
 	struct timeval tv;
 	int wrote = 0;
+	mm_segment_t oldmm = get_fs();
 
 	BUG_ON(nob <= 0);
 	for (;;) {
@@ -159,16 +173,22 @@ int csock_write_timeout(struct socket *sock, void *buffer, int nob, int timeout,
 				.tv_sec = ticks/HZ,
 				.tv_usec = ((ticks % HZ) * 1000000)/HZ
 			};
+
+			set_fs(KERNEL_DS);
 			error = sock_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO,
 					(char *)&tv, sizeof(tv));
+			set_fs(oldmm);
 			if (error) {
 				klog(KL_ERR, "cant set sock timeout, err=%d",
 					error);
 				goto out;
 			}
 		}
+
 		then = jiffies;
+		set_fs(KERNEL_DS);
 		error = sock_sendmsg(sock, &msg, iov.iov_len);
+		set_fs(oldmm);
 		ticks-= jiffies - then;
 
 		if (error < 0) {
@@ -213,6 +233,7 @@ int csock_read_timeout(struct socket *sock, void *buffer, int nob, int timeout, 
 	unsigned long then;
 	struct timeval tv;
 	int read = 0;
+	mm_segment_t oldmm = get_fs();
 
 	BUG_ON(nob <= 0);
 	BUG_ON(ticks <= 0);
@@ -239,8 +260,11 @@ int csock_read_timeout(struct socket *sock, void *buffer, int nob, int timeout, 
 			.tv_usec = ((ticks % HZ) * 1000000)/HZ
 		};
 
+		set_fs(KERNEL_DS);
 		error = sock_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
 					(char *)&tv, sizeof(tv));
+		set_fs(oldmm);
+
 		if (error) {
 			klog(KL_ERR, "cant set sock timeout, err=%d",
 				error);
@@ -248,7 +272,9 @@ int csock_read_timeout(struct socket *sock, void *buffer, int nob, int timeout, 
 		}
 
 		then = jiffies;
+		set_fs(KERNEL_DS);
 		error = sock_recvmsg(sock, &msg, iov.iov_len, 0);
+		set_fs(oldmm);
 		ticks-= jiffies - then;
 		
 		if (error < 0) {
@@ -282,5 +308,68 @@ out:
 	if (pread)
 		*pread = read;
 	return error;
+}
+
+int csock_listen(struct socket **sockp, __u32 local_ip, int local_port, int backlog)
+{
+	int error;
+	struct socket *sock;
+
+	error = csock_create(&sock, local_ip, local_port);
+	if (error) {
+		klog(KL_ERR, "csock_create err=%d", error);
+		return error;
+	}
+
+	error = sock->ops->listen(sock, backlog);
+	if (error) {
+		klog(KL_ERR, "listen failed err=%d", error);
+		goto out;
+	}
+	*sockp = sock;
+	return 0;
+out:
+	sock_release(sock);
+	return error;
+}
+
+int csock_accept(struct socket **newsockp, struct socket *sock)
+{
+	wait_queue_t wait;
+	struct socket *newsock;
+	int error;
+
+	init_waitqueue_entry(&wait, current);
+	error = sock_create_lite(PF_PACKET, sock->type, IPPROTO_TCP, &newsock);
+	if (error) {
+		klog(KL_ERR, "sock_create_lite err=%d", error);
+		return error;
+	}
+	newsock->ops = sock->ops;
+	set_current_state(TASK_INTERRUPTIBLE);
+	add_wait_queue(sk_sleep(sock->sk), &wait);
+	error = sock->ops->accept(sock, newsock, O_NONBLOCK);
+	if (error == -EAGAIN) {
+		klog(KL_INFO, "accept returned %d", error);
+		schedule();
+		error = sock->ops->accept(sock, newsock, O_NONBLOCK);
+	}
+	remove_wait_queue(sk_sleep(sock->sk), &wait);
+	set_current_state(TASK_RUNNING);
+	if (error) {
+		klog(KL_ERR, "accept error=%d", error);
+		goto out;
+	}
+
+	*newsockp = newsock;
+	return 0;
+out:
+	sock_release(newsock);
+	return error;
+}
+
+void csock_abort_accept(struct socket *sock)
+{
+	wake_up_all(sk_sleep(sock->sk));
 }
 
