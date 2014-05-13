@@ -20,6 +20,7 @@
 
 #include "klog.h"
 #include <cdisk_cmd.h>
+#include <cdisk.h>
 
 MODULE_LICENSE("GPL");
 

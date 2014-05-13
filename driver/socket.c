@@ -10,7 +10,10 @@
 #include "socket.h"
 #include "klog.h"
 
+#include <cdisk.h>
+
 #define __SUBCOMPONENT__ "socket"
+
 
 int csock_create(struct socket **sockp,
 	__u32 local_ip, int local_port)

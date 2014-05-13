@@ -13,12 +13,15 @@
 
 #include <stdarg.h>
 
+
 #define KLOG_MSG_BYTES	200
-#define KLOG_PATH "/var/log/klog.log"
+#define KLOG_NAME_BYTES	20
+#define KLOG_PATH "/var/log/"
 
 struct klog_msg {
 	struct list_head 	msg_list;
 	int			level;
+	char			log_name[KLOG_NAME_BYTES];
 	char 			data[KLOG_MSG_BYTES];
 };
 
@@ -120,6 +123,25 @@ static void klog_msg_printk(struct klog_msg *msg)
 	}
 }
 
+static char *klog_full_path(char *log_name)
+{
+	char *full_path = NULL;
+	int path_len = strlen(KLOG_PATH);
+	int name_len = strlen(log_name);
+	int len = path_len + name_len;
+	
+	full_path = kmalloc((len + 1)*sizeof(char), GFP_KERNEL);
+	if (!full_path) {
+		printk(KERN_ERR "klog : cant alloc mem for path");
+		return NULL;
+	}
+	memcpy(full_path, KLOG_PATH, path_len*sizeof(char));
+	memcpy(full_path + path_len, log_name, name_len*sizeof(char));
+	full_path[len] = '\0';
+
+	return full_path;
+}
+
 static void klog_msg_write(struct klog_msg *msg)
 {
 	struct file * file = NULL;
@@ -127,11 +149,16 @@ static void klog_msg_write(struct klog_msg *msg)
 	int wrote;
 	int size;
 	int error;
+	char *path = NULL;
 
-	file = filp_open(KLOG_PATH, O_APPEND|O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR);
+	path = klog_full_path(msg->log_name);
+	if (!path)
+		return;
+	
+	file = filp_open(path, O_APPEND|O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR);
 	if (!file) {
 		printk(KERN_ERR "klog : cant open log file");
-		return;	
+		goto cleanup;	
 	}
 	size = strlen(msg->data);	
 	wrote = vfs_write(file, msg->data, size, &pos);
@@ -142,7 +169,10 @@ static void klog_msg_write(struct klog_msg *msg)
 	if (error < 0)
 		printk(KERN_ERR "klog : vfs_fsync err=%d", error);
 
-	filp_close(file, NULL);	
+	filp_close(file, NULL);
+
+cleanup:
+	kfree(path);
 }
 
 static void klog_msg_queue_process(void)
@@ -169,12 +199,12 @@ static void klog_msg_queue_process(void)
 static char *klog_level_s[] = {"INV", "INF", "ERR" , "DBG" , "WRN", "MAX"};
 
 
-void klog(int level, const char *subcomp, const char *file, int line, const char *func, const char *fmt, ...)
+void klog(int level, const char *log_name, const char *subcomp, const char *file, int line, const char *func, const char *fmt, ...)
 {
 	
     	struct klog_msg *msg = NULL;
     	char *pos;
-    	int left, count, len;
+    	int left, count, len, log_name_count;
     	va_list args;
     	struct timespec ts;
 	struct tm tm;
@@ -201,7 +231,11 @@ void klog(int level, const char *subcomp, const char *file, int line, const char
 		printk(KERN_ERR "klog: cant alloc msg");
 		return;
 	}
-	
+
+	log_name_count = sizeof(msg->log_name)/sizeof(char);
+	snprintf(msg->log_name, log_name_count-1, "%s", log_name);
+	msg->log_name[log_name_count-1] = '\0';
+ 
 	pos = msg->data;
 	count = sizeof(msg->data)/sizeof(char);
 	left = count - 1;
