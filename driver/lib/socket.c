@@ -355,14 +355,17 @@ int csock_accept(struct socket **newsockp, struct socket *sock)
 	add_wait_queue(sk_sleep(sock->sk), &wait);
 	error = sock->ops->accept(sock, newsock, O_NONBLOCK);
 	if (error == -EAGAIN) {
-		klog(KL_INFO, "accept returned %d", error);
+		klog(KL_WARN, "accept returned %d", error);
 		schedule();
 		error = sock->ops->accept(sock, newsock, O_NONBLOCK);
 	}
 	remove_wait_queue(sk_sleep(sock->sk), &wait);
 	set_current_state(TASK_RUNNING);
 	if (error) {
-		klog(KL_ERR, "accept error=%d", error);
+		if (error == -EAGAIN)
+			klog(KL_WARN, "accept error=%d", error);
+		else
+			klog(KL_ERR, "accept error=%d", error);
 		goto out;
 	}
 
