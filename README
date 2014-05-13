@@ -4,15 +4,19 @@ cloud-disk
 cloud disk - linux block device with data backend in web/cloud.
 
 BUILD:
+
 make
 
 BUILD CLEAN:
+
 make clean
 
 INSTALL:
+
 sudo insmod bin/cdisk_mod.ko
 
 UNINSTALL:
+
 sudo rmmod cdisk_mod.ko
 
 USAGE:
@@ -39,30 +43,36 @@ sudo bin/cdisk_ctl --destroy DISK_NUM
   	"delete device /dev/cdiskDISK_NUM"
 
 LOGGING:
-	dmesg or /var/log/klog.log (root access required)
+	dmesg 
+		or 
+	/var/log/cdisk.log (root access required)
 
 TESTS:
+
 sudo python  tests/disk_fmt.py
 	"this test does the same in USAGE section"
 
 SOURCES STRUCTURE:
-bin\  "folder for binaries"
-  cdisk_mod.ko "kernel module binary"
-  cdisk_ctl    "ctl utility binary"
 
-utils\  "folder for ctl utilities"
-  cdisk_ctl.c "ctl utility code"
-  Makefile    "ctl utility makefile"
+bin\  	"folder for binaries"
+	cdisk_mod.ko 	"kernel module binary"
+  	cdisk_ctl    	"ctl utility binary"
+
+utils\  	"folder for ctl utilities"
+  	cdisk_ctl.c 	"ctl utility code"
+  	Makefile    	"ctl utility makefile"
   
-driver\	"folder for device driver"
-  include\ 	"folder for external dev. driver headers"
-    cdisk_cmd.h		"header for dev. driver public ioctls"
-  klog.h	"kernel logging, wrapper over printk"  
-  klog.c        "kernel logging, wrapper over printk"
-  cdisk.c       "block(disk) device driver"
-  sockets.c     "kernel sockets lib"
-  sockets.h     "kernel sockets lib"
-  Makefile      "kernel module makefile"
+driver\		"folder for device driver"
+  	include\ 		"folder for external dev. driver headers"
+   		cdisk_cmd.h	"header for dev. driver public ioctls"
+	inc\			"folder for private headers"
+		cdisk.h		"cdisk general header"
+  	klog.h		"kernel logging, wrapper over printk"  
+  	klog.c        	"kernel logging, wrapper over printk"
+  	cdisk.c       	"block(disk) device driver"
+  	sockets.c     	"kernel sockets lib"
+  	sockets.h     	"kernel sockets lib"
+  	Makefile      	"kernel module makefile"
   
 tests\  "folder for tests"
   __init__.py 
