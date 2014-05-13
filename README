@@ -75,8 +75,8 @@ driver\		"folder for device driver"
   	Makefile      	"kernel module makefile"
   
 tests\  "folder for tests"
-  __init__.py 
-  settings.py    "general settings container"
-  cmd.py         "lib to execute shell cmd"
-  test_fs_fmt.py    "disk formating to EXT4 like file system test"
+	__init__.py 
+  	settings.py	"general settings container"
+  	cmd.py         	"lib to execute shell cmd"
+  	test_fs_fmt.py  "disk formating to EXT4 like file system test"
 
