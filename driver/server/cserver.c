@@ -33,7 +33,7 @@ static int csrv_thread_routine(void *data)
 	int error = 0;
 
 	while (!kthread_should_stop()) {
-		error = csock_listen(&lsock, 0x00000000, 9111, 5);
+		error = csock_listen(&lsock, INADDR_ANY, 9111, 5);
 		if (error) {
 			klog(KL_ERR, "csock_listen err=%d", error);
 			goto out;
@@ -69,6 +69,8 @@ static int __init csrv_init(void)
 	wake_up_process(csrv_thread);
 
 	klog(KL_INFO, "inited");
+	return 0;
+
 out_klog_release:
 	klog_release();
 out:

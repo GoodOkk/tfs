@@ -1,6 +1,6 @@
 obj-m = cdisk_cli.o cdisk_srv.o
 
-ccflags-y := -I$(src)/include -I$(src)/inc
+ccflags-y := -I$(src)/include -I$(src)/inc -g3 -Wall -Werror
 
 cdisk_cli-y := client/cdisk.o	lib/klog.o lib/socket.o
 cdisk_srv-y := server/cserver.o	lib/klog.o lib/socket.o

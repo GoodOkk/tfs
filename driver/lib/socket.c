@@ -30,6 +30,8 @@ int csock_create(struct socket **sockp,
 		goto out;	
 	}
 
+	klog(KL_INFO, "socket=%p", sock);
+
 	set_fs(KERNEL_DS);
 	option = 1;
 	error = sock_setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
@@ -58,6 +60,7 @@ int csock_create(struct socket **sockp,
 			goto out_sock_release;
 		}
 	}
+	*sockp = sock;
 	return 0;
 
 out_sock_release:
@@ -313,7 +316,7 @@ out:
 int csock_listen(struct socket **sockp, __u32 local_ip, int local_port, int backlog)
 {
 	int error;
-	struct socket *sock;
+	struct socket *sock = NULL;
 
 	error = csock_create(&sock, local_ip, local_port);
 	if (error) {
@@ -321,6 +324,8 @@ int csock_listen(struct socket **sockp, __u32 local_ip, int local_port, int back
 		return error;
 	}
 
+	klog(KL_INFO, "sock=%p, sock->ops=%p", sock, sock->ops);
+	
 	error = sock->ops->listen(sock, backlog);
 	if (error) {
 		klog(KL_ERR, "listen failed err=%d", error);
