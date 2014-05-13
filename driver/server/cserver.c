@@ -12,15 +12,41 @@
 #include <linux/workqueue.h>
 #include <linux/timer.h>
 #include <linux/cdev.h>
-
+#include <linux/kthread.h>
+#include <linux/time.h>
+#include <linux/wait.h>
 #include <asm/uaccess.h>
 
 #include <klog.h>
+#include <socket.h>
 #include <cserver.h>
 
 MODULE_LICENSE("GPL");
 
 #define __SUBCOMPONENT__ "csrv"
+
+static struct task_struct *csrv_thread;
+
+static int csrv_thread_routine(void *data)
+{
+	struct socket *lsock = NULL;
+	int error = 0;
+
+	while (!kthread_should_stop()) {
+		error = csock_listen(&lsock, 0x00000000, 9111, 5);
+		if (error) {
+			klog(KL_ERR, "csock_listen err=%d", error);
+			goto out;
+		}
+	}
+
+out:
+	if (lsock)
+		csock_release(lsock);
+
+	return error;
+}
+
 
 static int __init csrv_init(void)
 {	
@@ -32,8 +58,19 @@ static int __init csrv_init(void)
 		goto out;
 	}
 
+	klog(KL_INFO, "initing");
 
-	klog(KL_INFO, "init");
+	csrv_thread = kthread_create(csrv_thread_routine, NULL, "kcdisk_srv");
+	if (IS_ERR(csrv_thread)) {
+		error = PTR_ERR(csrv_thread);
+		klog(KL_ERR, "kthread_create err=%d", error);
+		goto out_klog_release;
+	}
+	wake_up_process(csrv_thread);
+
+	klog(KL_INFO, "inited");
+out_klog_release:
+	klog_release();
 out:
 	return error;
 }
@@ -41,6 +78,7 @@ out:
 static void __exit csrv_exit(void)
 {
 	klog(KL_INFO, "exiting");
+	kthread_stop(csrv_thread);
 	klog(KL_INFO, "exited");
 	klog_release();
 }
