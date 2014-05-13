@@ -12,15 +12,15 @@ BUILD CLEAN:
 make clean
 
 INSTALL:
-	client-side:
+	on client-side:
 		sudo insmod bin/cdisk_cli.ko
-	server-side:
+	on server-side:
 		sudo insmod bin/cdisk_srv.ko
 
 UNINSTALL:
-	client-side:
+	on client-side:
 		sudo rmmod cdisk_cli.ko
-	server-side:
+	on server-side:
 		sudo rmmod cdisk_srv.ko
 
 USAGE (client-side):
@@ -49,9 +49,9 @@ sudo bin/cdisk_ctl --destroy DISK_NUM
 LOGGING:
 	dmesg 
 		or 
-	client-side
+	on client-side:
 		/var/log/cdisk_cli.log (root access required)
-	server-side
+	on server-side:
 		/var/log/cdisk_srv.log (root access required)
 
 TESTS:
