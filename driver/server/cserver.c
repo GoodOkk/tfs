@@ -71,7 +71,7 @@ static int csrv_con_thread_routine(void *data)
 	if (!csrv_stopping) {
 		mutex_lock(&con_list_lock);
 		if (!list_empty(&con->con_list))
-			list_del(&con->con_list);	
+			list_del_init(&con->con_list);	
 		else
 			con = NULL;
 		mutex_unlock(&con_list_lock);
@@ -173,7 +173,7 @@ static int csrv_thread_routine(void *data)
 		mutex_lock(&con_list_lock);
 		if (!list_empty(&con_list)) {
 			con = list_first_entry(&con_list, struct csrv_con, con_list);
-			list_del(&con->con_list);		
+			list_del_init(&con->con_list);		
 		}
 		mutex_unlock(&con_list_lock);
 		if (!con)
