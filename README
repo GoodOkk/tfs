@@ -13,19 +13,19 @@ make clean
 
 INSTALL:
 	on client-side:
-		sudo insmod bin/cdisk_cli.ko
+		sudo insmod bin/cd_cli.ko
 	on server-side:
-		sudo insmod bin/cdisk_srv.ko
+		sudo insmod bin/cd_srv.ko
 
 UNINSTALL:
 	on client-side:
-		sudo rmmod cdisk_cli.ko
+		sudo rmmod cd_cli.ko
 	on server-side:
-		sudo rmmod cdisk_srv.ko
+		sudo rmmod cd_srv.ko
 
 USAGE (client-side):
 
-sudo bin/cdisk_ctl --create DISK_NUM
+sudo bin/cd_cli_ctl --create DISK_NUM
   	"this creates /dev/cdiskDISK_NUM device"
 
 sudo /sbin/mkfs -t ext4 /dev/cdisk1 
@@ -43,17 +43,16 @@ sudo cd /mnt/mnt_point && ...
 sudo umount /mnt/mnt_point
  	"umount file system"
 
-sudo bin/cdisk_ctl --destroy DISK_NUM
+sudo bin/cd_cli_ctl --destroy DISK_NUM
   	"delete device /dev/cdiskDISK_NUM"
 
 LOGGING:
 	dmesg 
 		or 
-	on client-side:
-		/var/log/cdisk_cli.log (root access required)
-	on server-side:
-		/var/log/cdisk_srv.log (root access required)
-
+	file logs (root access required):
+		/var/log/cd_cli.log
+		/var/log/cd_srv.log
+		/var/log/cd_ksocket.log
 TESTS:
 
 sudo python  tests/test_fs_fmt.py
@@ -62,30 +61,32 @@ sudo python  tests/test_fs_fmt.py
 SOURCES STRUCTURE:
 
 bin\  	"folder for binaries"
-	cdisk_cli.ko 	"client kernel module binary"
-	cdisk_srv.ko	"server kernel module binary"
-  	cdisk_ctl    	"ctl utility binary"
+	cd_cli.ko 	"client kernel module binary"
+	cd_srv.ko	"server kernel module binary"
+  	cd_cli_ctl    	"client ctl utility binary"
 
 utils\  	"folder for ctl utilities"
-  	cdisk_ctl.c 	"ctl utility code"
-  	Makefile    	"ctl utility makefile"
-  
+	client\
+  		cdisk_ctl.c 	"client ctl utility code"
+  		Makefile    	"client ctl utility makefile"
+  	Makefile	
+
 driver\		"folder for device driver"
   	include\ 		"folder for external dev. driver headers"
-   		cdisk_cmd.h	"header for dev. driver public ioctls"
+   		cd_cli_cmd.h	"header for client driver public ioctls"
 	inc\			"folder for private headers"
-		cdisk.h		"cdisk client general header"
-		cserver.h	"server general header"
+		cd_cli.h	"cdisk client general header"
+		cd_srv.h	"server general header"
 		klog.h
-		socket.h
+		ksocket.h
 		
  	lib\
   		klog.c        	"kernel logging, wrapper over printk"
-  	 	sockets.c     	"kernel sockets lib"
+  	 	ksocket.c     	"kernel sockets lib"
   	client\
-		cdisk.c       	"client block(disk) device driver"
+		cd_cli.c       	"client block(disk) device driver"
   	server\
-		cserver.c	"server driver"
+		cd_srv.c	"server driver"
 
   	Makefile      	"kernel modules makefile"
   

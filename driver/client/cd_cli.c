@@ -18,13 +18,15 @@
 
 #include <asm/uaccess.h>
 
+
+#include <cd_cli_cmd.h>
+#include <cd_cli.h>
 #include <klog.h>
-#include <cdisk_cmd.h>
-#include <cdisk.h>
 
 MODULE_LICENSE("GPL");
 
-#define __SUBCOMPONENT__ "cdisk"
+#define __SUBCOMPONENT__ "cd_cli"
+#define __LOGNAME__ "cd_cli.log"
 
 #define SECTOR_SHIFT		9
 #define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - SECTOR_SHIFT)

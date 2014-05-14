@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <malloc.h>
 
-#include <cdisk_cmd.h>
+#include <cd_cli_cmd.h>
 
 static void usage(void)
 {

@@ -18,14 +18,15 @@
 #include <linux/delay.h>
 #include <asm/uaccess.h>
 
+
+#include <cd_srv.h>
 #include <klog.h>
-#include <socket.h>
-#include <cserver.h>
+#include <ksocket.h>
 
 MODULE_LICENSE("GPL");
 
-#define __SUBCOMPONENT__ "csrv"
-
+#define __SUBCOMPONENT__ "cd_srv"
+#define __LOGNAME__ "cd_srv.log"
 
 #define LISTEN_RESTART_TIMEOUT_MS 5000
 
@@ -54,7 +55,7 @@ static void csrv_con_wait(struct csrv_con *con)
 static void csrv_con_free(struct csrv_con *con)
 {
 	klog(KL_DEBUG, "releasing sock %p", con->sock);
-	sock_release(con->sock);
+	ksock_release(con->sock);
 	put_task_struct(con->thread);
 	kfree(con);
 }
@@ -123,7 +124,7 @@ static int csrv_thread_routine(void *data)
 
 	while (!kthread_should_stop()) {
 		if (!csrv_sock) {
-			error = csock_listen(&lsock, INADDR_ANY, 9111, 5);
+			error = ksock_listen(&lsock, INADDR_ANY, 9111, 5);
 			if (error) {
 				klog(KL_ERR, "csock_listen err=%d", error);
 				msleep_interruptible(LISTEN_RESTART_TIMEOUT_MS);
@@ -137,7 +138,7 @@ static int csrv_thread_routine(void *data)
 
 		if (csrv_sock && !csrv_stopping) {
 			klog(KL_DEBUG, "accepting");
-			error = csock_accept(&con_sock, csrv_sock);
+			error = ksock_accept(&con_sock, csrv_sock);
 			if (error) {
 				if (error == -EAGAIN)
 					klog(KL_WARN, "csock_accept err=%d", error);
@@ -149,7 +150,7 @@ static int csrv_thread_routine(void *data)
 
 			if (!csrv_con_start(con_sock)) {
 				klog(KL_ERR, "csrv_con_start failed");
-				csock_release(con_sock);
+				ksock_release(con_sock);
 				continue;
 			}
 		}
@@ -164,7 +165,7 @@ static int csrv_thread_routine(void *data)
 	mutex_unlock(&csrv_lock);
 
 	if (lsock)
-		csock_release(lsock);
+		ksock_release(lsock);
 	
 	klog(KL_INFO, "releasing cons");
 
@@ -226,7 +227,7 @@ static void __exit csrv_exit(void)
 
 	mutex_lock(&csrv_lock);
 	if (csrv_sock)
-		csock_abort_accept(csrv_sock);
+		ksock_abort_accept(csrv_sock);
 	mutex_unlock(&csrv_lock);
 
 	kthread_stop(csrv_thread);

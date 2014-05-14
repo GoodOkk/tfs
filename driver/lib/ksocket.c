@@ -7,15 +7,13 @@
 #include <linux/delay.h>
 #include <net/sock.h>
 
-#include "socket.h"
+#include "ksocket.h"
 #include "klog.h"
 
-#include <cdisk.h>
+#define __SUBCOMPONENT__	"ksocket"
+#define __LOGNAME__ "cd_ksocket.log"		
 
-#define __SUBCOMPONENT__ "socket"
-
-
-int csock_create(struct socket **sockp,
+int ksock_create(struct socket **sockp,
 	__u32 local_ip, int local_port)
 {
 	struct sockaddr_in 	localaddr;
@@ -69,7 +67,7 @@ out:
 	return error;
 }
 
-int csock_set_sendbufsize(struct socket *sock, int size)
+int ksock_set_sendbufsize(struct socket *sock, int size)
 {
 	int option = size;
 	int error;
@@ -88,7 +86,7 @@ int csock_set_sendbufsize(struct socket *sock, int size)
 	return error;
 }
 
-int csock_set_rcvbufsize(struct socket *sock, int size)
+int ksock_set_rcvbufsize(struct socket *sock, int size)
 {
 	int option = size;
 	int error;
@@ -107,14 +105,14 @@ int csock_set_rcvbufsize(struct socket *sock, int size)
 	return error;
 }
 
-int csock_connect(struct socket **sockp, __u32 local_ip, int local_port,
+int ksock_connect(struct socket **sockp, __u32 local_ip, int local_port,
 			__u32 peer_ip, int peer_port)
 {
 	struct sockaddr_in srvaddr;
 	int error;
 	struct socket *sock = NULL;
 
-	error = csock_create(&sock, local_ip, local_port);
+	error = ksock_create(&sock, local_ip, local_port);
 	if (error) {
 		klog(KL_ERR, "sock create failed with err=%d", error);
 		goto out;
@@ -140,12 +138,12 @@ out:
 	return error;
 }
 
-void csock_release(struct socket *sock)
+void ksock_release(struct socket *sock)
 {
 	sock_release(sock);
 }
 
-int csock_write_timeout(struct socket *sock, void *buffer, int nob, int timeout, int *pwrote)
+int ksock_write_timeout(struct socket *sock, void *buffer, int nob, int timeout, int *pwrote)
 {
 	int error;
 	long ticks = timeout*HZ;
@@ -229,7 +227,7 @@ out:
 	return error;
 }
 
-int csock_read_timeout(struct socket *sock, void *buffer, int nob, int timeout, int *pread)
+int ksock_read_timeout(struct socket *sock, void *buffer, int nob, int timeout, int *pread)
 {
 	int error;
 	long ticks = timeout*HZ;
@@ -313,12 +311,12 @@ out:
 	return error;
 }
 
-int csock_listen(struct socket **sockp, __u32 local_ip, int local_port, int backlog)
+int ksock_listen(struct socket **sockp, __u32 local_ip, int local_port, int backlog)
 {
 	int error;
 	struct socket *sock = NULL;
 
-	error = csock_create(&sock, local_ip, local_port);
+	error = ksock_create(&sock, local_ip, local_port);
 	if (error) {
 		klog(KL_ERR, "csock_create err=%d", error);
 		return error;
@@ -338,7 +336,7 @@ out:
 	return error;
 }
 
-int csock_accept(struct socket **newsockp, struct socket *sock)
+int ksock_accept(struct socket **newsockp, struct socket *sock)
 {
 	wait_queue_t wait;
 	struct socket *newsock;
@@ -376,7 +374,7 @@ out:
 	return error;
 }
 
-void csock_abort_accept(struct socket *sock)
+void ksock_abort_accept(struct socket *sock)
 {
 	wake_up_all(sk_sleep(sock->sk));
 }
