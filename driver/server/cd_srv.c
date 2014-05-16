@@ -16,10 +16,12 @@
 #include <linux/time.h>
 #include <linux/wait.h>
 #include <linux/delay.h>
+#include <linux/miscdevice.h>
 #include <asm/uaccess.h>
 
 
 #include <cd_srv.h>
+#include <cd_srv_cmd.h>
 #include <klog.h>
 #include <ksocket.h>
 
@@ -29,6 +31,8 @@ MODULE_LICENSE("GPL");
 #define __LOGNAME__ "cd_srv.log"
 
 #define LISTEN_RESTART_TIMEOUT_MS 5000
+
+#define CDSRV_NAME "cdsrv"
 
 static struct task_struct *csrv_thread;
 
@@ -188,6 +192,83 @@ static int csrv_thread_routine(void *data)
 	return 0;
 }
 
+static int csrv_open(struct inode *inode, struct file *file)
+{
+	klog(KL_INFO, "in open");
+	if (!try_module_get(THIS_MODULE)) {
+		klog(KL_ERR, "cant ref module");
+		return -EINVAL;
+	}
+	klog(KL_INFO, "opened");
+	return 0;
+}
+
+static int csrv_release(struct inode *inode, struct file *file)
+{
+	klog(KL_INFO, "in release");
+	module_put(THIS_MODULE);
+	klog(KL_INFO, "released");
+	return 0;
+}
+
+static long csrv_ioctl(struct file *file, unsigned int code, unsigned long arg)
+{
+	int error = -EINVAL;
+	struct cd_srv_cmd *cmd = NULL;	
+
+	cmd = kmalloc(sizeof(struct cd_srv_cmd), GFP_KERNEL);
+	if (!cmd) {
+		error = -ENOMEM;
+		goto out;
+	}
+
+	if (copy_from_user(cmd, (const void *)arg, sizeof(struct cd_srv_cmd))) {
+		error = -EFAULT;
+		goto out_free_cmd;
+	}
+	
+	error = 0;
+	switch (code) {
+		case IOCTL_DISK_CREATE:
+			cmd->error = -EINVAL;	
+			break;
+		case IOCTL_DISK_DELETE:
+			cmd->error = -EINVAL;
+			break;
+		case IOCTL_DISK_SETUP:
+			cmd->error = -EINVAL;
+			break;
+		default:
+			klog(KL_ERR, "unknown ioctl=%d", cmd);
+			error = -EINVAL;
+			break;
+	}
+	
+	if (copy_to_user((void *)arg, cmd, sizeof(struct cd_srv_cmd))) {
+		error = -EFAULT;
+		goto out_free_cmd;
+	}
+	
+	return 0;
+out_free_cmd:
+	kfree(cmd);
+out:
+	return error;	
+}
+
+static const struct file_operations csrv_fops = {
+	.owner = THIS_MODULE,
+	.open = csrv_open,
+	.release = csrv_release,
+	.unlocked_ioctl = csrv_ioctl,
+};
+
+static struct miscdevice csrv_misc = {
+	.fops = &csrv_fops,
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = CDSRV_NAME,	
+};
+
 
 static int __init csrv_init(void)
 {	
@@ -201,11 +282,16 @@ static int __init csrv_init(void)
 
 	klog(KL_INFO, "initing");
 
+	error = misc_register(&csrv_misc);
+	if (error) {
+		klog(KL_ERR, "misc_register err=%d", error);
+		goto out_klog_release; 
+	}
 	csrv_thread = kthread_create(csrv_thread_routine, NULL, "cdisk_srv");
 	if (IS_ERR(csrv_thread)) {
 		error = PTR_ERR(csrv_thread);
 		klog(KL_ERR, "kthread_create err=%d", error);
-		goto out_klog_release;
+		goto out_misc_release;
 	}
 	get_task_struct(csrv_thread);
 	wake_up_process(csrv_thread);
@@ -213,6 +299,8 @@ static int __init csrv_init(void)
 	klog(KL_INFO, "inited");
 	return 0;
 
+out_misc_release:
+	misc_deregister(&csrv_misc);
 out_klog_release:
 	klog_release();
 out:
@@ -232,6 +320,8 @@ static void __exit csrv_exit(void)
 
 	kthread_stop(csrv_thread);
 	put_task_struct(csrv_thread);
+
+	misc_deregister(&csrv_misc);
 
 	klog(KL_INFO, "exited");
 	klog_release();

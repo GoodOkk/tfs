@@ -1,4 +1,5 @@
 #pragma once
+
 #include <linux/ioctl.h>
 #include <cd.h>
 
@@ -11,17 +12,17 @@
 
 #pragma pack(push, 1)
 
-struct cdisk_ctl_params {
+struct cd_srv_cmd {
 	int error;
 	union {
 		struct {
-			int disk_num;
+			struct cd_id disk_id;
 		} create;
 		struct {
-			int disk_num;
+			struct cd_id disk_id;
 		} setup;
 		struct {
-			int disk_num;
+			struct cd_id disk_id;
 		} delete;
 	} u;
 };
