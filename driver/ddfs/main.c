@@ -58,6 +58,65 @@ static void ddfs_sb_info_free(struct ddfs_sb_info *si)
 	kfree(si);	
 }
 
+static struct inode *ddfs_alloc_inode(struct super_block *sb)
+{
+	struct ddfs_inode_info *ini = NULL;
+	ini = (struct ddfs_inode_info *)kzalloc(sizeof(struct ddfs_inode_info), GFP_KERNEL);
+	if (!ini) {
+		klog(KL_ERR, "cant alloc inode info");
+		return NULL;
+	}
+	return &ini->vfs_inode;
+}
+
+static void ddfs_inode_rcu_callback(struct rcu_head *head)
+{
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+	struct ddfs_inode_info *ini = container_of(inode, struct ddfs_inode_info, vfs_inode);
+	
+	kfree(ini);
+}
+
+static void ddfs_destroy_inode(struct inode *inode)
+{
+	call_rcu(&inode->i_rcu, ddfs_inode_rcu_callback);
+}
+
+static int ddfs_statfs(struct dentry *dentry, struct kstatfs *buf)
+{
+	klog(KL_INFO, "dentry=%p, buf=%p", dentry, buf);
+	return 0;
+}
+
+static int ddfs_remount(struct super_block *sb, int *flags, char *data)
+{
+	sync_filesystem(sb);
+	klog(KL_INFO, "sb=%p, flags=%p, data=%p", sb, flags, data);
+	return 0;
+}
+
+static void ddfs_put_super(struct super_block *sb)
+{
+	struct ddfs_sb_info *si = sb->s_fs_info;
+
+	klog(KL_INFO, "sb=%p, si=%p", sb, si);
+
+	if (si) {
+		if (si->sbh)
+			mark_buffer_dirty(si->sbh);
+		ddfs_sb_info_free(si);
+	}
+	sb->s_fs_info = NULL;
+}
+
+static const struct super_operations ddfs_super_ops = {
+	.alloc_inode = ddfs_alloc_inode,
+	.destroy_inode = ddfs_destroy_inode,
+	.put_super = ddfs_put_super,
+	.statfs = ddfs_statfs,
+	.remount_fs = ddfs_remount,
+};
+
 static int ddfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	int err = -EINVAL;
