@@ -25,7 +25,7 @@
 #include <ksocket.h>
 
 #define __SUBCOMPONENT__ "tfs_srv"
-#define __LOGNAME__ "tfs_srv.log"
+#define __LOGNAME__ "tfs.log"
 
 #define LISTEN_RESTART_TIMEOUT_MS 5000
 
