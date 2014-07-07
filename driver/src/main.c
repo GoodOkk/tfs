@@ -20,16 +20,16 @@
 #include <linux/buffer_head.h>
 #include <asm/uaccess.h>
 
-#include <ddfs_misc.h>
-#include <ddfs_srv.h>
-#include <ddfs_cmd.h>
-#include <ddfs.h>
+#include <tfs_misc.h>
+#include <tfs_srv.h>
+#include <tfs_cmd.h>
+#include <tfs_private.h>
 #include <klog.h>
 
 MODULE_LICENSE("GPL");
 
-#define __SUBCOMPONENT__ "ddfs"
-#define __LOGNAME__ "ddfs.log"
+#define __SUBCOMPONENT__ "tfs_main"
+#define __LOGNAME__ "tfs.log"
 
 #define SECTOR_SHIFT		9
 #define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - SECTOR_SHIFT)
@@ -38,10 +38,10 @@ MODULE_LICENSE("GPL");
 
 #define SECTOR_SIZE  (PAGE_SIZE/PAGE_SECTORS)
 
-static struct ddfs_sb_info *ddfs_sb_info_create(struct super_block *sb)
+static struct tfs_sb_info *tfs_sb_info_create(struct super_block *sb)
 {
-	struct ddfs_sb_info *si = NULL;
-	si = kzalloc(sizeof(struct ddfs_sb_info), GFP_KERNEL);
+	struct tfs_sb_info *si = NULL;
+	si = kzalloc(sizeof(struct tfs_sb_info), GFP_KERNEL);
 	if (!si) {
 		klog(KL_ERR, "kzalloc failed");
 		return NULL;
@@ -51,17 +51,17 @@ static struct ddfs_sb_info *ddfs_sb_info_create(struct super_block *sb)
 	return si;
 }
 
-static void ddfs_sb_info_free(struct ddfs_sb_info *si)
+static void tfs_sb_info_free(struct tfs_sb_info *si)
 {
 	if (si->sbh)
 		brelse(si->sbh);
 	kfree(si);	
 }
 
-static struct inode *ddfs_alloc_inode(struct super_block *sb)
+static struct inode *tfs_alloc_inode(struct super_block *sb)
 {
-	struct ddfs_inode_info *ini = NULL;
-	ini = (struct ddfs_inode_info *)kzalloc(sizeof(struct ddfs_inode_info), GFP_KERNEL);
+	struct tfs_inode_info *ini = NULL;
+	ini = (struct tfs_inode_info *)kzalloc(sizeof(struct tfs_inode_info), GFP_KERNEL);
 	if (!ini) {
 		klog(KL_ERR, "cant alloc inode info");
 		return NULL;
@@ -69,64 +69,64 @@ static struct inode *ddfs_alloc_inode(struct super_block *sb)
 	return &ini->vfs_inode;
 }
 
-static void ddfs_inode_rcu_callback(struct rcu_head *head)
+static void tfs_inode_rcu_callback(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
-	struct ddfs_inode_info *ini = container_of(inode, struct ddfs_inode_info, vfs_inode);
+	struct tfs_inode_info *ini = container_of(inode, struct tfs_inode_info, vfs_inode);
 	
 	kfree(ini);
 }
 
-static void ddfs_destroy_inode(struct inode *inode)
+static void tfs_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, ddfs_inode_rcu_callback);
+	call_rcu(&inode->i_rcu, tfs_inode_rcu_callback);
 }
 
-static int ddfs_statfs(struct dentry *dentry, struct kstatfs *buf)
+static int tfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	klog(KL_INFO, "dentry=%p, buf=%p", dentry, buf);
 	return 0;
 }
 
-static int ddfs_remount(struct super_block *sb, int *flags, char *data)
+static int tfs_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
 	klog(KL_INFO, "sb=%p, flags=%p, data=%p", sb, flags, data);
 	return 0;
 }
 
-static void ddfs_put_super(struct super_block *sb)
+static void tfs_put_super(struct super_block *sb)
 {
-	struct ddfs_sb_info *si = sb->s_fs_info;
+	struct tfs_sb_info *si = sb->s_fs_info;
 
 	klog(KL_INFO, "sb=%p, si=%p", sb, si);
 
 	if (si) {
 		if (si->sbh)
 			mark_buffer_dirty(si->sbh);
-		ddfs_sb_info_free(si);
+		tfs_sb_info_free(si);
 	}
 	sb->s_fs_info = NULL;
 }
 
-static const struct super_operations ddfs_super_ops = {
-	.alloc_inode = ddfs_alloc_inode,
-	.destroy_inode = ddfs_destroy_inode,
-	.put_super = ddfs_put_super,
-	.statfs = ddfs_statfs,
-	.remount_fs = ddfs_remount,
+static const struct super_operations tfs_super_ops = {
+	.alloc_inode = tfs_alloc_inode,
+	.destroy_inode = tfs_destroy_inode,
+	.put_super = tfs_put_super,
+	.statfs = tfs_statfs,
+	.remount_fs = tfs_remount,
 };
 
-static int ddfs_fill_super(struct super_block *sb, void *data, int silent)
+static int tfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	int err = -EINVAL;
-	struct ddfs_sb_info *si = NULL;
-	struct ddfs_super_block *dsb = NULL;
+	struct tfs_sb_info *si = NULL;
+	struct tfs_super_block *dsb = NULL;
 	unsigned long offset = 0;
 
 	klog(KL_INFO, "sb=%p, data=%p, silent=%d", sb, data, silent);
 	
-	si = ddfs_sb_info_create(sb);
+	si = tfs_sb_info_create(sb);
 	if (!si) {
 		klog(KL_ERR, "cant create sb info for sb=%p", sb);
 		return err; 
@@ -142,46 +142,46 @@ static int ddfs_fill_super(struct super_block *sb, void *data, int silent)
 		klog(KL_ERR, "unable to read superblock");
 		goto out_si_free;
 	}
-	dsb = (struct ddfs_super_block *)(((char *)si->sbh->b_data) + offset);
+	dsb = (struct tfs_super_block *)(((char *)si->sbh->b_data) + offset);
 	si->sb = dsb;
 	sb->s_magic = le32_to_cpu(dsb->magic);
-	if (sb->s_magic != DDFS_SUPER_MAGIC) {
-		klog(KL_ERR, "cant fount ddfs magic");
+	if (sb->s_magic != TFS_SUPER_MAGIC) {
+		klog(KL_ERR, "cant fount tfs magic");
 		goto out_si_free;
 	}			
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
 
 out_si_free:
 	sb->s_fs_info = NULL;
-	ddfs_sb_info_free(si);
+	tfs_sb_info_free(si);
 
 	return err;
 }
 
-static void ddfs_kill_sb(struct super_block *sb)
+static void tfs_kill_sb(struct super_block *sb)
 {
 	klog(KL_INFO, "sb=%p", sb);
 	kill_block_super(sb);
 }
 
-static struct dentry *ddfs_mount(struct file_system_type *fs_type,
+static struct dentry *tfs_mount(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data)
 {
 	klog(KL_INFO, "fs_type=%p, flags=%x, dev_name=%s, data=%p",
 		fs_type, flags, dev_name, data);
 
-	return mount_bdev(fs_type, flags, dev_name, data, ddfs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, tfs_fill_super);
 }
 
-static struct file_system_type ddfs_fs_type = {
+static struct file_system_type tfs_fs_type = {
 	.owner = THIS_MODULE,
-	.name = "ddfs",
-	.mount = ddfs_mount,
-	.kill_sb = ddfs_kill_sb,
+	.name = "tfs",
+	.mount = tfs_mount,
+	.kill_sb = tfs_kill_sb,
 	.fs_flags = FS_REQUIRES_DEV,
 };
 
-static int __init ddfs_init(void)
+static int __init tfs_init(void)
 {	
 	int err = -EINVAL;
 	
@@ -191,19 +191,19 @@ static int __init ddfs_init(void)
 		goto out;
 	}
 
-	err = ddfs_srv_init();
+	err = tfs_srv_init();
 	if (err) {
-		klog(KL_ERR, "ddfs_srv_init err=%d", err);
+		klog(KL_ERR, "tfs_srv_init err=%d", err);
 		goto out_klog_release;
 	}
 
-	err = ddfs_misc_register();
+	err = tfs_misc_register();
 	if (err) {
-		klog(KL_ERR, "ddfs_misc_register err=%d", err);
+		klog(KL_ERR, "tfs_misc_register err=%d", err);
 		goto out_srv_release;
 	}
 	
-	err = register_filesystem(&ddfs_fs_type);
+	err = register_filesystem(&tfs_fs_type);
 	if (err) {
 		klog(KL_ERR, "register_filesystem err=%d", err);
 		goto out_misc_unreg; 
@@ -212,27 +212,27 @@ static int __init ddfs_init(void)
 	return 0;
 
 out_misc_unreg:
-	ddfs_misc_deregister();
+	tfs_misc_deregister();
 out_srv_release:
-	ddfs_srv_exit();		
+	tfs_srv_exit();		
 out_klog_release:
 	klog_release();
 out:
 	return err;
 }
 
-static void __exit ddfs_exit(void)
+static void __exit tfs_exit(void)
 {
 	klog(KL_INFO, "unregistering fs");
-	unregister_filesystem(&ddfs_fs_type);
+	unregister_filesystem(&tfs_fs_type);
 	klog(KL_INFO, "unregistering misc device");
-	ddfs_misc_deregister();
+	tfs_misc_deregister();
 	klog(KL_INFO, "shutdowning server");
-	ddfs_srv_exit();
+	tfs_srv_exit();
 	klog(KL_INFO, "exited");
 	klog_release();
 }
 
-module_init(ddfs_init);
-module_exit(ddfs_exit);
+module_init(tfs_init);
+module_exit(tfs_exit);
 
